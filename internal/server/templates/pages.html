@@ -1,0 +1,1375 @@
+{{define "login"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SupervisorPanel - 登录</title>
+  <style>
+    :root {
+      --bg-1: #fffaf2;
+      --bg-2: #f8eee0;
+      --card: #ffffff;
+      --line: #e8d7be;
+      --text: #2b1d0f;
+      --sub: #7a5a3b;
+      --accent: #b0652a;
+      --accent-2: #d4893f;
+      --ok: #1d8f50;
+      --danger: #b93b34;
+      --shadow: 0 14px 35px rgba(99, 63, 28, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", "Noto Sans SC", sans-serif;
+      background: radial-gradient(circle at 12% 18%, #ffd9aa 0%, transparent 45%),
+                  linear-gradient(150deg, var(--bg-1), var(--bg-2));
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .card {
+      width: min(460px, 100%);
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: var(--shadow);
+      padding: 26px;
+    }
+    h1 { margin: 0 0 8px; font-size: 28px; }
+    p { margin: 0 0 18px; color: var(--sub); }
+    label { display: block; margin: 14px 0 6px; font-size: 14px; }
+    input {
+      width: 100%; border: 1px solid var(--line); border-radius: 12px;
+      padding: 10px 12px; font-size: 15px; color: var(--text); background: #fffdf8;
+    }
+    button {
+      margin-top: 18px; width: 100%; border: 0; border-radius: 12px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #fff; padding: 11px 14px; font-size: 15px; cursor: pointer;
+    }
+    .msg { margin: 10px 0; padding: 10px 12px; border-radius: 10px; font-size: 14px; }
+    .err { background: #fce8e7; color: var(--danger); }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>SupervisorPanel</h1>
+    <p>管理员登录</p>
+    {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}
+    <form action="/login" method="post">
+      <label for="username">用户名</label>
+      <input id="username" name="username" autocomplete="username" required>
+      <label for="password">密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">登录</button>
+    </form>
+  </main>
+</body>
+</html>
+{{end}}
+
+{{define "projects"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SupervisorPanel - 项目列表</title>
+  {{template "common-style" .}}
+</head>
+<body>
+  <div class="wrap">
+    {{template "topbar" .}}
+    <section class="panel">
+      <h2>创建项目</h2>
+      <form class="inline-form" method="post" action="/projects">
+        <input name="name" placeholder="例如：order-service" required>
+        <button type="submit">创建</button>
+      </form>
+      <p class="hint">项目目录会自动创建在 <code>{{.ProjectsDir}}</code></p>
+    </section>
+
+    {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}
+    {{if .Info}}<div class="msg ok">{{.Info}}</div>{{end}}
+
+    <section class="panel">
+      <h2>项目列表</h2>
+      {{if not .Projects}}
+        <p class="hint">还没有项目，先创建一个吧。</p>
+      {{else}}
+      <table>
+        <thead>
+          <tr><th>名称</th><th>状态</th><th>主程序</th><th>运行用户</th><th>更新时间</th><th>操作</th></tr>
+        </thead>
+        <tbody>
+          {{range .Projects}}
+          {{$status := index $.Statuses .ID}}
+          <tr>
+            <td>{{.Name}}</td>
+            <td>
+              <span id="status-{{.ID}}" class="status-pill {{if eq $status "RUNNING"}}status-running{{else if or (eq $status "STOPPED") (eq $status "EXITED")}}status-stopped{{else}}status-unknown{{end}}">{{$status}}</span>
+            </td>
+            <td>{{if .EntryFile.Valid}}{{.EntryFile.String}}{{else}}未配置{{end}}</td>
+            <td>{{.RunUser}}</td>
+            <td>{{.UpdatedAt}}</td>
+            <td>
+              <a class="btn ghost" href="/projects/{{.ID}}">编辑</a>
+              <form id="action-stop-{{.ID}}" class="inline-mini list-action-form" method="post" action="/projects/{{.ID}}/action" data-project-id="{{.ID}}" {{if ne $status "RUNNING"}}style="display:none"{{end}}>
+                <input type="hidden" name="action" value="stop">
+                <input type="hidden" name="redirect_to" value="list">
+                <button class="ghost" type="submit">停止</button>
+              </form>
+              <form id="action-start-{{.ID}}" class="inline-mini list-action-form" method="post" action="/projects/{{.ID}}/action" data-project-id="{{.ID}}" {{if eq $status "RUNNING"}}style="display:none"{{end}}>
+                <input type="hidden" name="action" value="start">
+                <input type="hidden" name="redirect_to" value="list">
+                <button type="submit">启动</button>
+              </form>
+              <form class="inline-mini list-action-form" method="post" action="/projects/{{.ID}}/action" data-project-id="{{.ID}}">
+                <input type="hidden" name="action" value="restart">
+                <input type="hidden" name="redirect_to" value="list">
+                <button class="ghost" type="submit">重启</button>
+              </form>
+              <button class="ghost clone-open-btn" type="button" data-clone-action="/projects/{{.ID}}/clone" data-project-name="{{.Name}}">复制</button>
+              <form class="inline-mini" method="post" action="/projects/{{.ID}}/delete" onsubmit="return confirm('确认删除项目 {{.Name}} 吗？');">
+                <input type="hidden" name="confirm_name" value="{{.Name}}">
+                <button class="danger" type="submit">删除</button>
+              </form>
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{end}}
+    </section>
+    <div id="cloneModal" class="modal hidden" aria-hidden="true">
+      <div class="modal-backdrop" data-close-modal="1"></div>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="cloneModalTitle">
+        <h3 id="cloneModalTitle">复制项目</h3>
+        <p class="hint">请输入新项目名称，并选择是否复制符号链接。</p>
+        <form id="cloneModalForm" method="post" action="">
+          <label for="cloneNameInput">新项目名称</label>
+          <input id="cloneNameInput" name="name" required>
+          <label class="checkbox-row">
+            <input id="cloneSymlinkInput" type="checkbox" name="include_symlinks" value="1">
+            <span>复制符号链接</span>
+          </label>
+          <div class="actions">
+            <button class="ghost" type="button" id="cloneCancelBtn">取消</button>
+            <button type="submit">确认复制</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    <p class="hint" id="statusAutoRefreshHint">状态每5秒自动刷新</p>
+  </div>
+  <script>
+    (function () {
+      const hint = document.getElementById('statusAutoRefreshHint');
+
+      function statusClass(status) {
+        if (status === 'RUNNING') return 'status-running';
+        if (status === 'STOPPED' || status === 'EXITED') return 'status-stopped';
+        return 'status-unknown';
+      }
+
+      function syncActionButtons(id, status) {
+        const startBtnForm = document.getElementById('action-start-' + id);
+        const stopBtnForm = document.getElementById('action-stop-' + id);
+        if (!startBtnForm || !stopBtnForm) {
+          return;
+        }
+        if (status === 'RUNNING') {
+          startBtnForm.style.display = 'none';
+          stopBtnForm.style.display = 'inline-flex';
+          return;
+        }
+        startBtnForm.style.display = 'inline-flex';
+        stopBtnForm.style.display = 'none';
+      }
+
+      async function refreshStatuses() {
+        try {
+          const resp = await fetch('/projects/statuses', {
+            headers: {
+              'Accept': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            cache: 'no-store'
+          });
+          if (!resp.ok) {
+            throw new Error('状态请求失败');
+          }
+          const data = await resp.json();
+          const statuses = (data && data.statuses) || {};
+          Object.keys(statuses).forEach(function (id) {
+            const node = document.getElementById('status-' + id);
+            if (!node) return;
+            const value = statuses[id] || 'UNKNOWN';
+            node.textContent = value;
+            node.classList.remove('status-running', 'status-stopped', 'status-unknown');
+            node.classList.add(statusClass(value));
+            syncActionButtons(id, value);
+          });
+          if (hint) {
+            hint.textContent = '状态每5秒自动刷新';
+            hint.classList.remove('err');
+          }
+        } catch (err) {
+          if (hint) {
+            hint.textContent = '状态刷新失败，稍后重试';
+            hint.classList.add('err');
+          }
+        }
+      }
+
+      function setHint(text, isError) {
+        if (!hint) {
+          return;
+        }
+        hint.textContent = text;
+        hint.classList.remove('err', 'ok');
+        hint.classList.add(isError ? 'err' : 'ok');
+      }
+
+      async function submitAction(form) {
+        const button = form.querySelector('button[type="submit"]');
+        const projectID = form.getAttribute('data-project-id');
+        if (!projectID) {
+          return;
+        }
+        const previousLabel = button ? button.textContent : '';
+        if (button) {
+          button.disabled = true;
+          button.textContent = '执行中...';
+        }
+        try {
+          const formData = new FormData(form);
+          const resp = await fetch(form.action, {
+            method: 'POST',
+            body: formData,
+            headers: {
+              'Accept': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            }
+          });
+          const data = await resp.json();
+          if (!resp.ok || !data.ok) {
+            setHint(data.message || '操作失败', true);
+            return;
+          }
+          const nextStatus = (data.status || 'UNKNOWN');
+          const node = document.getElementById('status-' + projectID);
+          if (node) {
+            node.textContent = nextStatus;
+            node.classList.remove('status-running', 'status-stopped', 'status-unknown');
+            node.classList.add(statusClass(nextStatus));
+          }
+          syncActionButtons(projectID, nextStatus);
+          setHint(data.message || '操作成功', false);
+          setTimeout(function () {
+            refreshStatuses();
+          }, 500);
+        } catch (err) {
+          setHint('操作失败，请稍后重试', true);
+        } finally {
+          if (button) {
+            button.disabled = false;
+            button.textContent = previousLabel;
+          }
+        }
+      }
+
+      document.querySelectorAll('.list-action-form').forEach(function (form) {
+        form.addEventListener('submit', function (e) {
+          e.preventDefault();
+          submitAction(form);
+        });
+      });
+
+      const cloneModal = document.getElementById('cloneModal');
+      const cloneModalForm = document.getElementById('cloneModalForm');
+      const cloneNameInput = document.getElementById('cloneNameInput');
+      const cloneSymlinkInput = document.getElementById('cloneSymlinkInput');
+      const cloneCancelBtn = document.getElementById('cloneCancelBtn');
+
+      function openCloneModal(actionURL, defaultName) {
+        if (!cloneModal || !cloneModalForm || !cloneNameInput || !cloneSymlinkInput) {
+          return;
+        }
+        cloneModalForm.action = actionURL;
+        cloneNameInput.value = defaultName;
+        cloneSymlinkInput.checked = false;
+        cloneModal.classList.remove('hidden');
+        cloneModal.setAttribute('aria-hidden', 'false');
+        setTimeout(function () {
+          cloneNameInput.focus();
+          cloneNameInput.select();
+        }, 10);
+      }
+
+      function closeCloneModal() {
+        if (!cloneModal) {
+          return;
+        }
+        cloneModal.classList.add('hidden');
+        cloneModal.setAttribute('aria-hidden', 'true');
+      }
+
+      document.querySelectorAll('.clone-open-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          const actionURL = btn.getAttribute('data-clone-action') || '';
+          const oldName = btn.getAttribute('data-project-name') || '未命名项目';
+          if (!actionURL) {
+            setHint('复制入口异常，请刷新页面后重试', true);
+            return;
+          }
+          openCloneModal(actionURL, oldName + '-copy');
+        });
+      });
+
+      if (cloneCancelBtn) {
+        cloneCancelBtn.addEventListener('click', function () {
+          closeCloneModal();
+        });
+      }
+
+      if (cloneModal) {
+        cloneModal.addEventListener('click', function (e) {
+          const target = e.target;
+          if (target && target.getAttribute && target.getAttribute('data-close-modal') === '1') {
+            closeCloneModal();
+          }
+        });
+      }
+
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && cloneModal && !cloneModal.classList.contains('hidden')) {
+          closeCloneModal();
+        }
+      });
+
+      if (cloneModalForm) {
+        cloneModalForm.addEventListener('submit', function (e) {
+          if (!cloneNameInput || !cloneNameInput.value.trim()) {
+            e.preventDefault();
+            setHint('新项目名称不能为空', true);
+            return;
+          }
+          cloneNameInput.value = cloneNameInput.value.trim();
+        });
+      }
+
+      refreshStatuses();
+      setInterval(function () {
+        if (!document.hidden) {
+          refreshStatuses();
+        }
+      }, 5000);
+    })();
+  </script>
+</body>
+</html>
+{{end}}
+
+{{define "project"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SupervisorPanel - {{.Project.Name}}</title>
+  {{template "common-style" .}}
+</head>
+<body>
+  <div class="wrap">
+    {{template "topbar" .}}
+    <section class="panel">
+      <h2>项目：{{.Project.Name}}</h2>
+      <p class="hint">目录：<code>{{.Project.Path}}</code></p>
+      <p class="hint">状态：<strong>{{.Status}}</strong></p>
+      <div class="actions">
+        <a class="btn ghost" href="/projects/{{.Project.ID}}/logs">查看日志</a>
+      </div>
+    </section>
+
+    {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}
+    {{if .Info}}<div class="msg ok">{{.Info}}</div>{{end}}
+
+    <section class="panel cols">
+      <div>
+        <h3>上传文件</h3>
+        <div id="dropzone" class="dropzone">
+          <strong>拖拽文件到这里，松开后自动上传</strong>
+          <p class="hint">支持单文件、多文件、目录拖拽（浏览器支持时保留目录结构）</p>
+        </div>
+        <div class="upload-actions">
+          <button id="pickUploadBtn" type="button">上传文件</button>
+          <input id="pickFilesInput" name="files" type="file" multiple hidden>
+        </div>
+        <p class="hint">点击按钮可上传单文件或多文件；上传文件夹请直接拖拽到上方区域。</p>
+        <p id="uploadHint" class="hint"></p>
+      </div>
+
+      <div>
+        <h3>主程序配置</h3>
+        <form id="projectConfigForm" method="post" action="/projects/{{.Project.ID}}/config">
+          <input type="hidden" name="entry_file" value="{{.CurrentEntry}}">
+          <label>启动参数</label>
+          <input id="projectArgsInput" name="args" value="{{.CurrentArgs}}" placeholder="例如：--port 9000 --env prod">
+          <label>运行用户</label>
+          <input id="projectRunUserInput" name="run_user" value="{{.Project.RunUser}}" required>
+          <button type="submit">保存参数和运行用户</button>
+        </form>
+        <p class="hint">主程序请在下方文件列表中直接指定，点击后立即生效。</p>
+        <p id="configHint" class="hint"></p>
+        <p id="entryHint" class="hint"></p>
+
+        <div class="actions">
+          <form method="post" action="/projects/{{.Project.ID}}/action"><input type="hidden" name="action" value="start"><button type="submit">启动</button></form>
+          <form method="post" action="/projects/{{.Project.ID}}/action"><input type="hidden" name="action" value="stop"><button class="ghost" type="submit">停止</button></form>
+          <form method="post" action="/projects/{{.Project.ID}}/action"><input type="hidden" name="action" value="restart"><button class="ghost" type="submit">重启</button></form>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h3>项目文件</h3>
+      <div class="explorer-bar">
+        <div class="breadcrumbs">
+          {{range $i, $b := .Breadcrumbs}}
+            {{if gt $i 0}}<span>/</span>{{end}}
+            <a href="/projects/{{$.Project.ID}}{{if $b.Dir}}?dir={{$b.Dir | urlquery}}{{end}}">{{$b.Name}}</a>
+          {{end}}
+        </div>
+        <div class="explorer-actions">
+          {{if .CurrentDir}}
+          <a class="btn ghost" href="/projects/{{.Project.ID}}{{if .ParentDir}}?dir={{.ParentDir | urlquery}}{{end}}">上一级</a>
+          {{end}}
+          <form class="inline-mini" method="post" action="/projects/{{.Project.ID}}/mkdir">
+            <input type="hidden" name="current_dir" value="{{.CurrentDir}}">
+            <input class="small-input" name="name" placeholder="新建文件夹" required>
+            <button class="ghost" type="submit">创建</button>
+          </form>
+          <form class="inline-mini" method="post" action="/projects/{{.Project.ID}}/create-file">
+            <input type="hidden" name="current_dir" value="{{.CurrentDir}}">
+            <input class="small-input" name="name" placeholder="新建文件" required>
+            <button class="ghost" type="submit">创建</button>
+          </form>
+        </div>
+      </div>
+      {{if not .Entries}}
+        <p class="hint">暂无文件，请先上传。</p>
+      {{else}}
+        <div class="file-list-block">
+          {{range .Entries}}
+          {{if .IsDir}}
+          <div class="file-row folder-row" data-file-path="{{.Path}}">
+            <code>{{.Name}}/</code>
+            <div class="file-actions">
+              <a class="btn ghost" href="/projects/{{$.Project.ID}}?dir={{.Path | urlquery}}">进入</a>
+              <form class="inline-mini" method="post" action="/projects/{{$.Project.ID}}/delete-dir" onsubmit="return confirm('确认删除目录 {{.Path}} 及其全部内容吗？');">
+                <input type="hidden" name="rel_path" value="{{.Path}}">
+                <input type="hidden" name="return_dir" value="{{$.CurrentDir}}">
+                <button class="danger" type="submit">删除</button>
+              </form>
+            </div>
+          </div>
+          {{else}}
+          <div class="file-row {{if .IsCurrent}}current-entry{{end}}" data-file-path="{{.Path}}">
+            <code>{{.Name}}</code>
+            <div class="file-actions">
+              <span class="entry-badge {{if not .IsCurrent}}hidden{{end}}">当前主程序</span>
+              <form class="inline-mini set-entry-form {{if .IsCurrent}}hidden{{end}}" method="post" action="/projects/{{$.Project.ID}}/config" data-file-path="{{.Path}}">
+                <input type="hidden" name="entry_file" value="{{.Path}}">
+                <input type="hidden" name="args" value="">
+                <input type="hidden" name="run_user" value="">
+                <button class="ghost" type="submit">设为主程序</button>
+              </form>
+              {{if .Editable}}
+              <a class="btn ghost" href="/projects/{{$.Project.ID}}/files/edit?path={{.Path | urlquery}}">编辑</a>
+              {{end}}
+              <form class="inline-mini" method="post" action="/projects/{{$.Project.ID}}/delete-file" onsubmit="return confirm('确认删除文件 {{.Path}} 吗？');">
+                <input type="hidden" name="rel_path" value="{{.Path}}">
+                <input type="hidden" name="return_dir" value="{{$.CurrentDir}}">
+                <button class="danger" type="submit">删除</button>
+              </form>
+            </div>
+          </div>
+          {{end}}
+          {{end}}
+        </div>
+      {{end}}
+    </section>
+
+    <section class="panel danger-panel">
+      <h3>危险操作</h3>
+      <p class="hint">删除项目会清理项目目录、数据库记录和 Supervisor 配置，无法恢复。</p>
+      <form method="post" action="/projects/{{.Project.ID}}/delete" onsubmit="return confirm('此操作不可恢复，确认删除项目 {{.Project.Name}} 吗？');">
+        <label>输入项目名确认删除</label>
+        <input name="confirm_name" placeholder="{{.Project.Name}}" required>
+        <button class="danger" type="submit">删除项目</button>
+      </form>
+    </section>
+  </div>
+  <script>
+  (function () {
+    const dropzone = document.getElementById('dropzone');
+    const pickUploadBtn = document.getElementById('pickUploadBtn');
+    const pickFilesInput = document.getElementById('pickFilesInput');
+    const projectConfigForm = document.getElementById('projectConfigForm');
+    const uploadHint = document.getElementById('uploadHint');
+    const uploadURL = '/projects/{{.Project.ID}}/upload';
+    if (!dropzone || !pickUploadBtn || !pickFilesInput || !projectConfigForm || !uploadHint) {
+      return;
+    }
+
+    let uploading = false;
+
+    function setHint(message, type) {
+      uploadHint.textContent = message || '';
+      uploadHint.classList.remove('ok', 'err');
+      if (type === 'ok') {
+        uploadHint.classList.add('ok');
+      }
+      if (type === 'err') {
+        uploadHint.classList.add('err');
+      }
+    }
+
+    function setDropState(state) {
+      dropzone.classList.remove('active', 'busy');
+      if (state) {
+        dropzone.classList.add(state);
+      }
+    }
+
+    async function uploadFiles(files) {
+      if (!files.length) {
+        setHint('未获取到可上传文件', 'err');
+        return;
+      }
+      if (uploading) {
+        setHint('正在上传中，请稍候', 'err');
+        return;
+      }
+      uploading = true;
+      setDropState('busy');
+      setHint('正在上传...', '');
+      const formData = new FormData();
+      for (const item of files) {
+        formData.append('files', item.file, item.path);
+      }
+      try {
+        const expectedCount = files.length;
+        setHint('准备上传 ' + expectedCount + ' 个文件...', '');
+        const resp = await fetch(uploadURL, {
+          method: 'POST',
+          body: formData,
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Accept': 'application/json'
+          }
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) {
+          setHint(data.message || '上传失败', 'err');
+          return;
+        }
+        const receivedCount = Number(data.received_count || expectedCount);
+        const savedCount = Number((typeof data.saved_count !== 'undefined' ? data.saved_count : data.count) || 0);
+        const failedCount = Number(data.failed_count || Math.max(receivedCount - savedCount, 0));
+        const failSummary = (data.failed_summary || '').trim();
+        if (savedCount < expectedCount || failedCount > 0) {
+          let message = '部分上传成功（提交' + expectedCount + '/接收' + receivedCount + '/成功' + savedCount + '/失败' + failedCount + '）';
+          if (failSummary) {
+            message += '：' + failSummary;
+          }
+          setHint(message, 'err');
+          return;
+        }
+        setHint((data.message || '上传成功') + '，正在刷新...', 'ok');
+        setTimeout(function () {
+          window.location.reload();
+        }, 500);
+      } catch (error) {
+        setHint('上传失败：' + (error && error.message ? error.message : '未知错误'), 'err');
+      } finally {
+        uploading = false;
+        setDropState('');
+      }
+    }
+
+    function walkEntry(entry, prefix) {
+      return new Promise((resolve) => {
+        if (entry.isFile) {
+          entry.file(function (file) {
+            const rel = (prefix ? prefix + '/' : '') + file.name;
+            resolve([{ file: file, path: rel }]);
+          }, function () {
+            resolve([]);
+          });
+          return;
+        }
+        if (entry.isDirectory) {
+          const reader = entry.createReader();
+          const allEntries = [];
+          const readAll = function () {
+            reader.readEntries(async function (entries) {
+              if (!entries.length) {
+                const allFiles = [];
+                for (const child of allEntries) {
+                  const childFiles = await walkEntry(child, (prefix ? prefix + '/' : '') + entry.name);
+                  allFiles.push.apply(allFiles, childFiles);
+                }
+                resolve(allFiles);
+                return;
+              }
+              allEntries.push.apply(allEntries, entries);
+              readAll();
+            }, function () {
+              resolve([]);
+            });
+          };
+          readAll();
+          return;
+        }
+        resolve([]);
+      });
+    }
+
+    async function parseDroppedFiles(dataTransfer) {
+      function hasDirectoryItems(dt) {
+        const items = dt.items ? Array.from(dt.items) : [];
+        for (const item of items) {
+          if (item.kind !== 'file' || !item.webkitGetAsEntry) {
+            continue;
+          }
+          const entry = item.webkitGetAsEntry();
+          if (entry && entry.isDirectory) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      const plainFiles = Array.from(dataTransfer.files || []);
+      const directoryMode = hasDirectoryItems(dataTransfer);
+
+      if (!directoryMode) {
+        return plainFiles.map(function (file, index) {
+          return {
+            file: file,
+            path: file.webkitRelativePath || file.name,
+            index: index
+          };
+        });
+      }
+
+      const results = [];
+      const dedup = new Set();
+      function addFile(file, relPath, source, index) {
+        if (!file) {
+          return;
+        }
+        const cleanPath = (relPath || file.webkitRelativePath || file.name || '').trim();
+        if (!cleanPath) {
+          return;
+        }
+        const key = cleanPath + '|' + String(file.size) + '|' + String(file.lastModified || 0) + '|' + source + '|' + String(index || 0);
+        if (dedup.has(key)) {
+          return;
+        }
+        dedup.add(key);
+        results.push({ file: file, path: cleanPath });
+      }
+
+      const items = dataTransfer.items ? Array.from(dataTransfer.items) : [];
+      let walkIdx = 0;
+      for (const item of items) {
+        if (item.kind !== 'file') {
+          continue;
+        }
+        const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+        if (entry && entry.isDirectory) {
+          const files = await walkEntry(entry, '');
+          files.forEach(function (f) {
+            addFile(f.file, f.path, 'entry', walkIdx++);
+          });
+          continue;
+        }
+        const file = item.getAsFile();
+        if (file) {
+          addFile(file, file.name, 'item', walkIdx++);
+        }
+      }
+
+      plainFiles.forEach(function (file, idx) {
+        addFile(file, file.webkitRelativePath || file.name, 'plain', idx);
+      });
+      return results;
+    }
+
+    ['dragenter', 'dragover'].forEach(function (eventName) {
+      dropzone.addEventListener(eventName, function (e) {
+        e.preventDefault();
+        if (!uploading) {
+          setDropState('active');
+        }
+      });
+    });
+    ['dragleave', 'drop'].forEach(function (eventName) {
+      dropzone.addEventListener(eventName, function (e) {
+        e.preventDefault();
+        if (!uploading) {
+          setDropState('');
+        }
+      });
+    });
+
+    dropzone.addEventListener('drop', async function (e) {
+      if (!e.dataTransfer) {
+        setHint('未检测到拖拽数据', 'err');
+        return;
+      }
+      const files = await parseDroppedFiles(e.dataTransfer);
+      await uploadFiles(files);
+    });
+
+    pickUploadBtn.addEventListener('click', function () {
+      if (uploading) {
+        setHint('正在上传中，请稍候', 'err');
+        return;
+      }
+      pickFilesInput.value = '';
+      pickFilesInput.click();
+    });
+
+    pickFilesInput.addEventListener('change', async function () {
+      const selected = Array.from(pickFilesInput.files || []);
+      const files = selected.map(function (file) {
+        return {
+          file: file,
+          path: file.webkitRelativePath || file.name
+        };
+      });
+      await uploadFiles(files);
+    });
+
+    const entryHint = document.getElementById('entryHint');
+    const configHint = document.getElementById('configHint');
+    function setEntryHint(msg, type) {
+      if (!entryHint) {
+        return;
+      }
+      entryHint.textContent = msg || '';
+      entryHint.classList.remove('ok', 'err');
+      if (type === 'ok') {
+        entryHint.classList.add('ok');
+      }
+      if (type === 'err') {
+        entryHint.classList.add('err');
+      }
+    }
+
+    function setConfigHint(msg, type) {
+      if (!configHint) {
+        return;
+      }
+      configHint.textContent = msg || '';
+      configHint.classList.remove('ok', 'err');
+      if (type === 'ok') {
+        configHint.classList.add('ok');
+      }
+      if (type === 'err') {
+        configHint.classList.add('err');
+      }
+    }
+
+    function markCurrentEntry(path) {
+      const configEntryInput = document.querySelector('form[action="/projects/{{.Project.ID}}/config"] input[name="entry_file"]');
+      if (configEntryInput) {
+        configEntryInput.value = path;
+      }
+      document.querySelectorAll('.file-row').forEach(function (row) {
+        const rowPath = row.getAttribute('data-file-path') || '';
+        const badge = row.querySelector('.entry-badge');
+        const form = row.querySelector('.set-entry-form');
+        if (rowPath === path) {
+          row.classList.add('current-entry');
+          if (badge) badge.classList.remove('hidden');
+          if (form) form.classList.add('hidden');
+        } else {
+          row.classList.remove('current-entry');
+          if (badge) badge.classList.add('hidden');
+          if (form) form.classList.remove('hidden');
+        }
+      });
+    }
+
+    document.querySelectorAll('.set-entry-form').forEach(function (form) {
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const argsInput = document.getElementById('projectArgsInput');
+        const runUserInput = document.getElementById('projectRunUserInput');
+        const entryPath = (form.getAttribute('data-file-path') || '').trim();
+        const hiddenEntry = form.querySelector('input[name="entry_file"]');
+        const submitBtn = form.querySelector('button[type="submit"]');
+        if (!entryPath) {
+          setEntryHint('未读取到主程序路径，请刷新后重试', 'err');
+          return;
+        }
+        const oldText = submitBtn ? submitBtn.textContent : '';
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.textContent = '应用中...';
+        }
+        try {
+          const fd = new FormData();
+          fd.append('entry_file', entryPath);
+          fd.append('args', (argsInput && argsInput.value) ? argsInput.value : '');
+          fd.append('run_user', (runUserInput && runUserInput.value) ? runUserInput.value : '');
+          const resp = await fetch(form.action, {
+            method: 'POST',
+            body: fd,
+            headers: {
+              'Accept': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest',
+              'X-File-Path': entryPath
+            }
+          });
+          const data = await resp.json();
+          if (!resp.ok || !data.ok) {
+            setEntryHint(data.message || '设置主程序失败', 'err');
+            return;
+          }
+          const nextEntryPath = (data.current_entry || (hiddenEntry ? hiddenEntry.value : '') || entryPath).trim();
+          if (nextEntryPath) {
+            markCurrentEntry(nextEntryPath);
+          }
+          setEntryHint(data.message || '主程序已更新并生效', 'ok');
+        } catch (err) {
+          setEntryHint('设置主程序失败，请稍后重试', 'err');
+        } finally {
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = oldText || '设为主程序';
+          }
+        }
+      });
+    });
+
+    projectConfigForm.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      const submitBtn = projectConfigForm.querySelector('button[type="submit"]');
+      const oldText = submitBtn ? submitBtn.textContent : '';
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = '保存中...';
+      }
+      try {
+        const resp = await fetch(projectConfigForm.action, {
+          method: 'POST',
+          body: new FormData(projectConfigForm),
+          headers: {
+            'Accept': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+          }
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) {
+          setConfigHint(data.message || '保存失败', 'err');
+          return;
+        }
+        if (data.current_entry) {
+          markCurrentEntry(data.current_entry);
+        }
+        setConfigHint(data.message || '保存成功', 'ok');
+      } catch (err) {
+        setConfigHint('保存失败，请稍后重试', 'err');
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = oldText || '保存参数和运行用户';
+        }
+      }
+    });
+  })();
+</script>
+</body>
+</html>
+{{end}}
+
+{{define "edit-file"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SupervisorPanel - 编辑文件</title>
+  {{template "common-style" .}}
+</head>
+<body>
+  <div class="wrap">
+    {{template "topbar" .}}
+    <section class="panel">
+      <h2>在线编辑文件</h2>
+      <p class="hint">项目：{{.Project.Name}}</p>
+      <p class="hint">文件：<code>{{.RelPath}}</code></p>
+      <p class="hint">仅支持常见文本文件，单文件上限 1MB。</p>
+      <div class="actions">
+        <a class="btn ghost" href="/projects/{{.Project.ID}}">返回项目</a>
+      </div>
+    </section>
+    {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}
+    {{if .Info}}<div class="msg ok">{{.Info}}</div>{{end}}
+    <section class="panel">
+      <form method="post" action="/projects/{{.Project.ID}}/files/edit">
+        <input type="hidden" name="path" value="{{.RelPath}}">
+        <input type="hidden" name="mtime_nano" value="{{.MtimeNano}}">
+        <textarea class="editor" name="content" spellcheck="false">{{.Content}}</textarea>
+        <div class="actions">
+          <button type="submit">保存</button>
+          <a class="btn ghost" href="/projects/{{.Project.ID}}">取消</a>
+        </div>
+      </form>
+    </section>
+  </div>
+</body>
+</html>
+{{end}}
+
+{{define "logs"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SupervisorPanel - 日志 - {{.Project.Name}}</title>
+  {{template "common-style" .}}
+</head>
+<body>
+  <div class="wrap">
+    {{template "topbar" .}}
+    <section class="panel">
+      <h2>项目日志：{{.Project.Name}}</h2>
+      <p class="hint">显示最近 {{.Lines}} 行（日志路径: <code>/var/log/supervisor-panel/sp_{{.Project.Slug}}.log</code>）</p>
+      <div class="actions">
+        <a class="btn ghost" href="/projects/{{.Project.ID}}">返回项目</a>
+        <a class="btn ghost" href="/projects/{{.Project.ID}}/logs?lines=200">200行</a>
+        <a class="btn ghost" href="/projects/{{.Project.ID}}/logs?lines=500">500行</a>
+        <a class="btn ghost" href="/projects/{{.Project.ID}}/logs?lines=1000">1000行</a>
+        <button id="toggleFollow" type="button" class="btn">开始追踪</button>
+        <span id="followState" class="hint">未连接</span>
+      </div>
+    </section>
+    {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}
+    {{if .Info}}<div class="msg ok">{{.Info}}</div>{{end}}
+    <section class="panel">
+      {{if .Logs}}
+      <pre id="logbox" class="logbox">{{.Logs}}</pre>
+      {{else}}
+      <pre id="logbox" class="logbox"></pre>
+      <p class="hint">暂无日志输出。</p>
+      {{end}}
+    </section>
+  </div>
+  <script>
+    (function () {
+      const logBox = document.getElementById('logbox');
+      const toggle = document.getElementById('toggleFollow');
+      const state = document.getElementById('followState');
+      if (!logBox || !toggle || !state) {
+        return;
+      }
+
+      const maxChars = 220000;
+      let source = null;
+      let following = false;
+      let offset = Number('{{.StartOffset}}') || 0;
+
+      function setState(text) {
+        state.textContent = text;
+      }
+
+      function trimLogIfNeeded() {
+        if (logBox.textContent.length > maxChars) {
+          logBox.textContent = logBox.textContent.slice(logBox.textContent.length - maxChars);
+        }
+      }
+
+      function appendChunk(chunk) {
+        if (!chunk) {
+          return;
+        }
+        logBox.textContent += chunk;
+        trimLogIfNeeded();
+        logBox.scrollTop = logBox.scrollHeight;
+      }
+
+      function startFollow() {
+        if (source) {
+          source.close();
+          source = null;
+        }
+        const url = '/projects/{{.Project.ID}}/logs/stream?offset=' + encodeURIComponent(offset);
+        source = new EventSource(url);
+        following = true;
+        toggle.textContent = '暂停追踪';
+        setState('连接中...');
+
+        source.addEventListener('ready', function () {
+          setState('实时追踪中');
+        });
+
+        source.addEventListener('log', function (ev) {
+          try {
+            const payload = JSON.parse(ev.data || '{}');
+            appendChunk(payload.chunk || '');
+            if (typeof payload.offset === 'number') {
+              offset = payload.offset;
+            }
+          } catch (err) {
+            setState('解析日志失败');
+          }
+        });
+
+        source.addEventListener('error', function () {
+          setState('连接中断，自动重连中...');
+        });
+      }
+
+      function stopFollow() {
+        following = false;
+        toggle.textContent = '开始追踪';
+        setState('已暂停');
+        if (source) {
+          source.close();
+          source = null;
+        }
+      }
+
+      toggle.addEventListener('click', function () {
+        if (following) {
+          stopFollow();
+          return;
+        }
+        startFollow();
+      });
+
+      document.addEventListener('visibilitychange', function () {
+        if (document.hidden) {
+          if (following) {
+            stopFollow();
+            setState('页面不可见，已自动暂停');
+          }
+          return;
+        }
+        if (!following) {
+          startFollow();
+          setState('页面恢复可见，已自动继续');
+        }
+      });
+
+      window.addEventListener('beforeunload', function () {
+        if (source) {
+          source.close();
+          source = null;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
+{{end}}
+
+{{define "password"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SupervisorPanel - 修改密码</title>
+  {{template "common-style" .}}
+</head>
+<body>
+  <div class="wrap">
+    {{template "topbar" .}}
+    <section class="panel narrow">
+      <h2>修改管理员密码</h2>
+      {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}
+      {{if .Info}}<div class="msg ok">{{.Info}}</div>{{end}}
+      <form method="post" action="/account/password">
+        <label>当前密码</label>
+        <input type="password" name="current_password" required>
+        <label>新密码</label>
+        <input type="password" name="new_password" minlength="8" required>
+        <button type="submit">保存</button>
+      </form>
+    </section>
+  </div>
+</body>
+</html>
+{{end}}
+
+{{define "topbar"}}
+<header class="topbar">
+  <h1><a href="/projects">SupervisorPanel</a></h1>
+  <nav>
+    <a href="/projects">项目列表</a>
+    <a href="/account/password">修改密码</a>
+    <a href="/logout">退出</a>
+  </nav>
+</header>
+{{end}}
+
+{{define "common-style"}}
+<style>
+  :root {
+    --bg-1: #f4efe5;
+    --bg-2: #efe2d2;
+    --card: rgba(255, 255, 255, 0.92);
+    --line: #d9c0a0;
+    --text: #2d1f11;
+    --sub: #775839;
+    --accent: #b2652a;
+    --accent-2: #d88b40;
+    --ok: #147a45;
+    --danger: #ac3730;
+    --shadow: 0 12px 35px rgba(74, 46, 19, 0.12);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", "Noto Sans SC", sans-serif;
+    color: var(--text);
+    background: radial-gradient(circle at 20% 10%, #ffddb4 0%, transparent 30%),
+                radial-gradient(circle at 80% 0%, #fff3dc 0%, transparent 34%),
+                linear-gradient(160deg, var(--bg-1), var(--bg-2));
+    min-height: 100vh;
+    padding: 14px;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; }
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; margin-bottom: 14px;
+  }
+  .topbar h1 { margin: 0; font-size: 24px; }
+  .topbar a { color: var(--text); text-decoration: none; }
+  nav { display: flex; gap: 10px; flex-wrap: wrap; }
+  nav a {
+    border: 1px solid var(--line); background: var(--card); border-radius: 999px;
+    padding: 7px 12px;
+  }
+  .panel {
+    border: 1px solid var(--line); background: var(--card); border-radius: 16px;
+    box-shadow: var(--shadow); padding: 16px; margin-bottom: 14px;
+  }
+  .panel h2, .panel h3 { margin: 0 0 12px; }
+  .hidden { display: none !important; }
+  .hint { color: var(--sub); margin: 6px 0; }
+  .inline-form { display: flex; gap: 8px; flex-wrap: wrap; }
+  .upload-actions { display: flex; gap: 8px; margin: 8px 0; }
+  input, select {
+    width: 100%; border: 1px solid var(--line); border-radius: 10px;
+    padding: 9px 11px; font-size: 14px; color: var(--text); background: #fffefa;
+  }
+  .inline-form input { flex: 1 1 280px; }
+  button, .btn {
+    display: inline-block;
+    border: 0;
+    border-radius: 10px;
+    background: linear-gradient(130deg, var(--accent), var(--accent-2));
+    color: #fff;
+    padding: 9px 14px;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .ghost {
+    background: #fff;
+    color: var(--text);
+    border: 1px solid var(--line);
+  }
+  .msg { margin: 10px 0; padding: 9px 12px; border-radius: 10px; }
+  .ok { background: #e7f6ee; color: var(--ok); }
+  .err { background: #fae7e6; color: var(--danger); }
+  .status-pill {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .2px;
+  }
+  .status-running { background: #e7f6ee; color: #187846; border: 1px solid #bfe6cf; }
+  .status-stopped { background: #f1efec; color: #6a5a45; border: 1px solid #d7cfc2; }
+  .status-unknown { background: #fbe9e8; color: #a13731; border: 1px solid #efc3bf; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border-bottom: 1px solid #e8d7c1; padding: 10px 8px; text-align: left; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .file-list { display: flex; gap: 8px; flex-wrap: wrap; }
+  .dropzone {
+    border: 2px dashed #d7b994;
+    border-radius: 14px;
+    padding: 14px;
+    background: #fff8ef;
+    margin-bottom: 10px;
+    transition: all .18s ease;
+  }
+  .dropzone.active {
+    border-color: #b2662b;
+    background: #fff0df;
+    transform: translateY(-1px);
+  }
+  .dropzone.busy {
+    border-style: solid;
+    border-color: #bf7b42;
+    opacity: 0.7;
+    pointer-events: none;
+  }
+  .file-list-block { display: grid; gap: 8px; }
+  .explorer-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .explorer-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .small-input {
+    width: 130px;
+    min-width: 100px;
+    padding: 7px 9px;
+    font-size: 13px;
+  }
+  .breadcrumbs {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-size: 13px;
+  }
+  .breadcrumbs a {
+    color: var(--text);
+    text-decoration: none;
+    border-bottom: 1px dashed #c79f73;
+  }
+  .folder-row {
+    border-style: dashed;
+    background: #fffaf4;
+  }
+  .file-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px;
+    border: 1px solid #ead6be;
+    border-radius: 10px;
+    background: #fff8ef;
+  }
+  .current-entry {
+    border-color: #b38b5d;
+    background: #fff1dc;
+  }
+  .entry-badge {
+    border: 1px solid #cba06d;
+    border-radius: 999px;
+    padding: 3px 8px;
+    font-size: 12px;
+    color: #7b4d20;
+    background: #ffe8c8;
+    font-weight: 700;
+  }
+  .file-actions { display: flex; gap: 8px; align-items: center; }
+  .file-actions form { margin: 0; }
+  .file-row form { margin: 0; }
+  .inline-mini { display: inline-flex; margin-left: 6px; }
+  .danger {
+    background: linear-gradient(130deg, #b74a3a, #d66959);
+    color: #fff;
+  }
+  .danger-panel {
+    border-color: #e6b2ac;
+    background: rgba(255, 243, 241, 0.9);
+  }
+  .logbox {
+    margin: 0;
+    border: 1px solid #d4c3ad;
+    border-radius: 12px;
+    padding: 12px;
+    background: #2d251d;
+    color: #f6e7cf;
+    font-size: 13px;
+    overflow: auto;
+    max-height: 70vh;
+    line-height: 1.45;
+  }
+  .editor {
+    width: 100%;
+    min-height: 60vh;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px;
+    resize: vertical;
+    font-size: 14px;
+    line-height: 1.45;
+    background: #fffefa;
+    color: var(--text);
+    font-family: Consolas, "SFMono-Regular", Menlo, monospace;
+  }
+  .modal.hidden { display: none; }
+  .modal {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+  }
+  .modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(32, 20, 10, .45);
+  }
+  .modal-card {
+    position: relative;
+    width: min(520px, 100%);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: #fffaf2;
+    box-shadow: 0 22px 45px rgba(42, 26, 10, .24);
+    padding: 16px;
+  }
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .checkbox-row input { width: auto; }
+  .file-list code {
+    border: 1px solid #e5cfb4;
+    border-radius: 8px;
+    padding: 3px 7px;
+    background: #fff9f2;
+  }
+  .narrow { max-width: 480px; }
+  @media (max-width: 880px) {
+    .cols { grid-template-columns: 1fr; }
+    .topbar { align-items: flex-start; flex-direction: column; }
+  }
+</style>
+{{end}}

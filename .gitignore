@@ -1,0 +1,6 @@
+data/
+projects/
+*.db
+*.exe
+.build-release
+dist
