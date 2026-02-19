@@ -50,7 +50,7 @@ go run ./cmd/supervisor-panel init-admin --db ./data/supervisor-panel.db --usern
 ```bash
 curl -fsSL -o /tmp/supervisorpanel-install.sh https://raw.githubusercontent.com/kkqy/SupervisorPanel/main/scripts/install.sh
 chmod +x /tmp/supervisorpanel-install.sh
-sudo env RELEASE_VERSION=v1.0.0 bash /tmp/supervisorpanel-install.sh
+sudo env RELEASE_VERSION=v1.1.0 bash /tmp/supervisorpanel-install.sh
 ```
 
 安装最新版本（默认 `latest`）：
