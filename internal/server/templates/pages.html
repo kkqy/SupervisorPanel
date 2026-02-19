@@ -112,7 +112,7 @@
           <tr>
             <td>{{.Name}}</td>
             <td>
-              <span id="status-{{.ID}}" class="status-pill {{if eq $status "RUNNING"}}status-running{{else if or (eq $status "STOPPED") (eq $status "EXITED")}}status-stopped{{else}}status-unknown{{end}}">{{$status}}</span>
+              <span id="status-{{.ID}}" class="status-pill {{if eq $status "RUNNING"}}status-running{{else if or (eq $status "STOPPED") (eq $status "EXITED")}}status-stopped{{else}}status-unknown{{end}}">{{index $.StatusTexts .ID}}</span>
             </td>
             <td>{{if .EntryFile.Valid}}{{.EntryFile.String}}{{else}}未配置{{end}}</td>
             <td>{{.RunUser}}</td>
@@ -177,6 +177,18 @@
         return 'status-unknown';
       }
 
+      function statusText(status) {
+        if (status === 'RUNNING') return '运行中';
+        if (status === 'STOPPED') return '已停止';
+        if (status === 'EXITED') return '已退出';
+        if (status === 'STARTING') return '启动中';
+        if (status === 'STOPPING') return '停止中';
+        if (status === 'BACKOFF') return '启动失败(重试中)';
+        if (status === 'FATAL') return '启动失败';
+        if (status === 'UNKNOWN' || !status) return '未知';
+        return status;
+      }
+
       function syncActionButtons(id, status) {
         const startBtnForm = document.getElementById('action-start-' + id);
         const stopBtnForm = document.getElementById('action-stop-' + id);
@@ -210,7 +222,7 @@
             const node = document.getElementById('status-' + id);
             if (!node) return;
             const value = statuses[id] || 'UNKNOWN';
-            node.textContent = value;
+            node.textContent = statusText(value);
             node.classList.remove('status-running', 'status-stopped', 'status-unknown');
             node.classList.add(statusClass(value));
             syncActionButtons(id, value);
@@ -265,7 +277,7 @@
           const nextStatus = (data.status || 'UNKNOWN');
           const node = document.getElementById('status-' + projectID);
           if (node) {
-            node.textContent = nextStatus;
+            node.textContent = statusText(nextStatus);
             node.classList.remove('status-running', 'status-stopped', 'status-unknown');
             node.classList.add(statusClass(nextStatus));
           }
@@ -391,7 +403,7 @@
     <section class="panel">
       <h2>项目：{{.Project.Name}}</h2>
       <p class="hint">目录：<code>{{.Project.Path}}</code></p>
-      <p class="hint">状态：<strong>{{.Status}}</strong></p>
+      <p class="hint">状态：<strong>{{.StatusText}}</strong></p>
       <div class="actions">
         <a class="btn ghost" href="/projects/{{.Project.ID}}/logs">查看日志</a>
       </div>
@@ -493,6 +505,7 @@
               {{if .Editable}}
               <a class="btn ghost" href="/projects/{{$.Project.ID}}/files/edit?path={{.Path | urlquery}}">编辑</a>
               {{end}}
+              <a class="btn ghost" href="/projects/{{$.Project.ID}}/download?path={{.Path | urlquery}}{{if $.CurrentDir}}&dir={{$.CurrentDir | urlquery}}{{end}}">下载</a>
               <form class="inline-mini" method="post" action="/projects/{{$.Project.ID}}/delete-file" onsubmit="return confirm('确认删除文件 {{.Path}} 吗？');">
                 <input type="hidden" name="rel_path" value="{{.Path}}">
                 <input type="hidden" name="return_dir" value="{{$.CurrentDir}}">

@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -192,12 +193,16 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	statuses := make(map[int64]string, len(projects))
+	statusTexts := make(map[int64]string, len(projects))
 	for _, p := range projects {
-		statuses[p.ID] = s.sup.Status(p.Slug)
+		status := s.sup.Status(p.Slug)
+		statuses[p.ID] = status
+		statusTexts[p.ID] = statusTextCN(status)
 	}
 	s.render(w, "projects", map[string]any{
 		"Projects":    projects,
 		"Statuses":    statuses,
+		"StatusTexts": statusTexts,
 		"ProjectsDir": s.cfg.ProjectsDir,
 		"Error":       r.URL.Query().Get("error"),
 		"Info":        r.URL.Query().Get("info"),
@@ -305,6 +310,8 @@ func (s *Server) handleProjectRoute(w http.ResponseWriter, r *http.Request) {
 		s.handleDeleteFile(w, r, projectID)
 	case "delete-dir":
 		s.handleDeleteDir(w, r, projectID)
+	case "download":
+		s.handleDownloadFile(w, r, projectID)
 	case "files":
 		if len(parts) >= 3 && parts[2] == "edit" {
 			s.handleEditFile(w, r, projectID)
@@ -345,6 +352,7 @@ func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request, pro
 		http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=%s", projectID, urlEscape(err.Error())), http.StatusFound)
 		return
 	}
+	status := s.sup.Status(project.Slug)
 	s.render(w, "project", map[string]any{
 		"Project":      project,
 		"Files":        files,
@@ -354,7 +362,8 @@ func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request, pro
 		"Breadcrumbs":  breadcrumbs,
 		"CurrentEntry": currentEntry,
 		"CurrentArgs":  currentArgs,
-		"Status":       s.sup.Status(project.Slug),
+		"Status":       status,
+		"StatusText":   statusTextCN(status),
 		"Error":        r.URL.Query().Get("error"),
 		"Info":         r.URL.Query().Get("info"),
 	})
@@ -999,6 +1008,42 @@ func (s *Server) handleDeleteDir(w http.ResponseWriter, r *http.Request, project
 		}
 	}
 	http.Redirect(w, r, projectDirURL(projectID, returnDir, "info", "目录已删除"), http.StatusFound)
+}
+
+func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request, projectID int64) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	project, err := s.store.GetProjectByID(projectID)
+	if err != nil || project == nil {
+		http.NotFound(w, r)
+		return
+	}
+	currentDir := normalizeUploadRelPath(r.URL.Query().Get("dir"))
+	relPath := normalizeUploadRelPath(r.URL.Query().Get("path"))
+	if relPath == "" {
+		http.Redirect(w, r, projectDirURL(projectID, currentDir, "error", "文件路径不合法"), http.StatusFound)
+		return
+	}
+	targetPath, err := safeJoin(project.Path, relPath)
+	if err != nil {
+		http.Redirect(w, r, projectDirURL(projectID, currentDir, "error", "文件路径不合法"), http.StatusFound)
+		return
+	}
+	info, err := os.Stat(targetPath)
+	if err != nil {
+		http.Redirect(w, r, projectDirURL(projectID, currentDir, "error", "文件不存在或无权限访问"), http.StatusFound)
+		return
+	}
+	if info.IsDir() {
+		http.Redirect(w, r, projectDirURL(projectID, currentDir, "error", "仅支持下载文件"), http.StatusFound)
+		return
+	}
+	fileName := filepath.Base(relPath)
+	attachment := fmt.Sprintf("attachment; filename=%q; filename*=UTF-8''%s", fileName, url.QueryEscape(fileName))
+	w.Header().Set("Content-Disposition", attachment)
+	http.ServeFile(w, r, targetPath)
 }
 
 func (s *Server) handleEditFile(w http.ResponseWriter, r *http.Request, projectID int64) {
@@ -1716,4 +1761,28 @@ func detectRuntimeUser(preferred string) string {
 func urlEscape(v string) string {
 	replacer := strings.NewReplacer("%", "%25", " ", "%20", "&", "%26", "?", "%3F", "#", "%23", "+", "%2B")
 	return replacer.Replace(v)
+}
+
+func statusTextCN(status string) string {
+	v := strings.ToUpper(strings.TrimSpace(status))
+	switch v {
+	case "RUNNING":
+		return "运行中"
+	case "STOPPED":
+		return "已停止"
+	case "EXITED":
+		return "已退出"
+	case "STARTING":
+		return "启动中"
+	case "STOPPING":
+		return "停止中"
+	case "BACKOFF":
+		return "启动失败(重试中)"
+	case "FATAL":
+		return "启动失败"
+	case "UNKNOWN", "":
+		return "未知"
+	default:
+		return v
+	}
 }
