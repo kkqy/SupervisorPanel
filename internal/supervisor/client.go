@@ -98,14 +98,18 @@ func (c *Client) Control(action, slug string) (string, error) {
 
 func (c *Client) Status(slug string) string {
 	out, err := c.run("status", c.ProgramName(slug))
-	if err != nil {
+	if out == "" && err != nil {
 		return "UNKNOWN"
 	}
 	fields := strings.Fields(out)
 	if len(fields) < 2 {
 		return "UNKNOWN"
 	}
-	return fields[1]
+	status := strings.ToUpper(strings.TrimSpace(fields[1]))
+	if status == "ERROR" {
+		return "UNKNOWN"
+	}
+	return status
 }
 
 func (c *Client) RemoveProject(slug string) error {
