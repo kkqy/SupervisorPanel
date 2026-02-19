@@ -130,29 +130,39 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		s.render(w, "login", map[string]any{"Error": "请求格式错误"})
+	if !requireAJAX(w, r) {
 		return
 	}
-	username := strings.TrimSpace(r.FormValue("username"))
-	password := r.FormValue("password")
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请求格式错误"})
+		return
+	}
+	username := strings.TrimSpace(req.Username)
+	password := req.Password
 	admin, err := s.store.GetAdminByUsername(username)
 	if err != nil {
-		s.serverError(w, err)
+		log.Printf("login failed: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": "服务器内部错误"})
 		return
 	}
 	if admin == nil || auth.VerifyPassword(admin.PasswordHash, password) != nil {
-		s.render(w, "login", map[string]any{"Error": "用户名或密码错误"})
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "message": "用户名或密码错误"})
 		return
 	}
 	token, err := randomToken(32)
 	if err != nil {
-		s.serverError(w, err)
+		log.Printf("login token failed: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": "服务器内部错误"})
 		return
 	}
 	expires := time.Now().Add(time.Duration(s.cfg.SessionTTLHours) * time.Hour)
 	if err := s.store.SaveSession(db.Session{Token: token, AdminID: admin.ID, ExpiresAt: expires}); err != nil {
-		s.serverError(w, err)
+		log.Printf("save session failed: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": "服务器内部错误"})
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -164,7 +174,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		Expires:  expires,
 	})
-	http.Redirect(w, r, "/projects", http.StatusFound)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":       true,
+		"message":  "登录成功",
+		"redirect": "/projects",
+	})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -210,42 +224,54 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Redirect(w, r, "/projects?error=请求格式错误", http.StatusFound)
+	if !requireAJAX(w, r) {
 		return
 	}
-	name := strings.TrimSpace(r.FormValue("name"))
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请求格式错误"})
+		return
+	}
+	name := strings.TrimSpace(req.Name)
 	if name == "" {
-		http.Redirect(w, r, "/projects?error=项目名不能为空", http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "项目名不能为空"})
 		return
 	}
 	runUser := detectRuntimeUser(s.cfg.RuntimeUser)
 	seedSlug := fmt.Sprintf("tmp_%d", time.Now().UnixNano())
 	projectID, err := s.store.CreateProject(db.Project{Name: name, Slug: seedSlug, Path: "", RunUser: runUser})
 	if err != nil {
-		http.Redirect(w, r, "/projects?error=创建失败，可能项目名重复", http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "创建失败，可能项目名重复"})
 		return
 	}
 	projectPath := filepath.Join(s.cfg.ProjectsDir, strconv.FormatInt(projectID, 10))
 	if err := os.MkdirAll(projectPath, 0o775); err != nil {
 		_ = s.store.DeleteProject(projectID)
-		s.serverError(w, err)
+		log.Printf("create project mkdir failed: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": "服务器内部错误"})
 		return
 	}
 	if err := syncOwnership(projectPath, runUser, false); err != nil {
 		_ = os.RemoveAll(projectPath)
 		_ = s.store.DeleteProject(projectID)
-		http.Redirect(w, r, "/projects?error=创建目录成功，但设置目录所有者失败", http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "创建目录成功，但设置目录所有者失败"})
 		return
 	}
 	finalSlug := fmt.Sprintf("p%d", projectID)
 	if err := s.store.UpdateProjectIdentity(projectID, finalSlug, projectPath); err != nil {
 		_ = os.RemoveAll(projectPath)
 		_ = s.store.DeleteProject(projectID)
-		s.serverError(w, err)
+		log.Printf("update project identity failed: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": "服务器内部错误"})
 		return
 	}
-	http.Redirect(w, r, "/projects?info=项目创建成功", http.StatusFound)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":         true,
+		"message":    "项目创建成功",
+		"project_id": projectID,
+	})
 }
 
 func (s *Server) handleProjectStatuses(w http.ResponseWriter, r *http.Request) {
@@ -374,6 +400,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request, projectID 
 		http.NotFound(w, r)
 		return
 	}
+	if !requireAJAX(w, r) {
+		return
+	}
 	project, err := s.store.GetProjectByID(projectID)
 	if err != nil || project == nil {
 		http.NotFound(w, r)
@@ -460,10 +489,18 @@ func (s *Server) handleProjectConfig(w http.ResponseWriter, r *http.Request, pro
 		http.NotFound(w, r)
 		return
 	}
+	if !requireAJAX(w, r) {
+		return
+	}
 	configFail := func(message string) {
 		s.respondProjectConfigResult(w, r, projectID, message, true, "")
 	}
-	if err := r.ParseForm(); err != nil {
+	var req struct {
+		EntryFile string `json:"entry_file"`
+		Args      string `json:"args"`
+		RunUser   string `json:"run_user"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
 		configFail("请求参数错误")
 		return
 	}
@@ -472,12 +509,9 @@ func (s *Server) handleProjectConfig(w http.ResponseWriter, r *http.Request, pro
 		http.NotFound(w, r)
 		return
 	}
-	entryFile := normalizeUploadRelPath(r.FormValue("entry_file"))
-	if entryFile == "" {
-		entryFile = normalizeUploadRelPath(r.Header.Get("X-File-Path"))
-	}
-	args := strings.TrimSpace(r.FormValue("args"))
-	runUser := strings.TrimSpace(r.FormValue("run_user"))
+	entryFile := normalizeUploadRelPath(req.EntryFile)
+	args := strings.TrimSpace(req.Args)
+	runUser := strings.TrimSpace(req.RunUser)
 	if runUser == "" {
 		runUser = strings.TrimSpace(project.RunUser)
 		if runUser == "" {
@@ -535,49 +569,37 @@ func (s *Server) handleProjectAction(w http.ResponseWriter, r *http.Request, pro
 		http.NotFound(w, r)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=请求参数错误", projectID), http.StatusFound)
+	if !requireAJAX(w, r) {
 		return
 	}
-	action := strings.TrimSpace(r.FormValue("action"))
-	redirectTo := strings.TrimSpace(r.FormValue("redirect_to"))
+	var req struct {
+		Action string `json:"action"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请求参数错误"})
+		return
+	}
+	action := strings.TrimSpace(req.Action)
 	project, err := s.store.GetProjectByID(projectID)
 	if err != nil || project == nil {
 		http.NotFound(w, r)
 		return
 	}
-	errorURL := fmt.Sprintf("/projects/%d?error=", projectID)
-	infoURL := fmt.Sprintf("/projects/%d?info=", projectID)
-	if redirectTo == "list" {
-		errorURL = "/projects?error="
-		infoURL = "/projects?info="
-	}
 	out, err := s.sup.Control(action, project.Slug)
 	if err != nil {
-		if isAJAXRequest(r) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok":      false,
-				"message": err.Error(),
-				"status":  s.sup.Status(project.Slug),
-			})
-			return
-		}
-		http.Redirect(w, r, errorURL+urlEscape(err.Error()), http.StatusFound)
-		return
-	}
-	currentStatus := s.sup.Status(project.Slug)
-	if isAJAXRequest(r) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":      true,
-			"message": out,
-			"status":  currentStatus,
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"ok":      false,
+			"message": err.Error(),
+			"status":  s.sup.Status(project.Slug),
 		})
 		return
 	}
-	http.Redirect(w, r, infoURL+urlEscape(out), http.StatusFound)
+	currentStatus := s.sup.Status(project.Slug)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"message": out,
+		"status":  currentStatus,
+	})
 }
 
 func (s *Server) handleProjectLogs(w http.ResponseWriter, r *http.Request, projectID int64) {
@@ -684,33 +706,39 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request, pro
 		http.NotFound(w, r)
 		return
 	}
+	if !requireAJAX(w, r) {
+		return
+	}
 	project, err := s.store.GetProjectByID(projectID)
 	if err != nil || project == nil {
 		http.NotFound(w, r)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=请求参数错误", projectID), http.StatusFound)
+	var req struct {
+		ConfirmName string `json:"confirm_name"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请求参数错误"})
 		return
 	}
-	confirm := strings.TrimSpace(r.FormValue("confirm_name"))
+	confirm := strings.TrimSpace(req.ConfirmName)
 	if confirm != project.Name {
-		http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=请填写正确的项目名以确认删除", projectID), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请填写正确的项目名以确认删除"})
 		return
 	}
 	if err := s.sup.RemoveProject(project.Slug); err != nil {
-		http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=移除Supervisor配置失败：%s", projectID, urlEscape(err.Error())), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "移除Supervisor配置失败：" + err.Error()})
 		return
 	}
 	if err := os.RemoveAll(project.Path); err != nil {
-		http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=删除项目目录失败：%s", projectID, urlEscape(err.Error())), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "删除项目目录失败：" + err.Error()})
 		return
 	}
 	if err := s.store.DeleteProject(project.ID); err != nil {
-		http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=删除数据库记录失败：%s", projectID, urlEscape(err.Error())), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "删除数据库记录失败：" + err.Error()})
 		return
 	}
-	http.Redirect(w, r, "/projects?info=项目已删除", http.StatusFound)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "项目已删除"})
 }
 
 func (s *Server) handleCloneProject(w http.ResponseWriter, r *http.Request, sourceProjectID int64) {
@@ -718,26 +746,33 @@ func (s *Server) handleCloneProject(w http.ResponseWriter, r *http.Request, sour
 		http.NotFound(w, r)
 		return
 	}
+	if !requireAJAX(w, r) {
+		return
+	}
 	sourceProject, err := s.store.GetProjectByID(sourceProjectID)
 	if err != nil || sourceProject == nil {
 		http.NotFound(w, r)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Redirect(w, r, "/projects?error=请求参数错误", http.StatusFound)
+	var req struct {
+		Name            string `json:"name"`
+		IncludeSymlinks bool   `json:"include_symlinks"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请求参数错误"})
 		return
 	}
-	newName := strings.TrimSpace(r.FormValue("name"))
+	newName := strings.TrimSpace(req.Name)
 	if newName == "" {
-		http.Redirect(w, r, "/projects?error=新项目名称不能为空", http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "新项目名称不能为空"})
 		return
 	}
-	includeSymlinks := parseBoolForm(r.FormValue("include_symlinks"))
+	includeSymlinks := req.IncludeSymlinks
 
 	seedSlug := fmt.Sprintf("tmp_%d", time.Now().UnixNano())
 	newProjectID, err := s.store.CreateProject(db.Project{Name: newName, Slug: seedSlug, Path: "", RunUser: sourceProject.RunUser})
 	if err != nil {
-		http.Redirect(w, r, "/projects?error=创建副本失败", http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "创建副本失败"})
 		return
 	}
 
@@ -749,23 +784,25 @@ func (s *Server) handleCloneProject(w http.ResponseWriter, r *http.Request, sour
 
 	if err := os.MkdirAll(newProjectPath, 0o775); err != nil {
 		rollback()
-		s.serverError(w, err)
+		log.Printf("clone project mkdir failed: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": "服务器内部错误"})
 		return
 	}
 	if err := copyProjectTree(sourceProject.Path, newProjectPath, includeSymlinks); err != nil {
 		rollback()
-		http.Redirect(w, r, "/projects?error=复制项目文件失败", http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "复制项目文件失败"})
 		return
 	}
 	if err := syncOwnership(newProjectPath, sourceProject.RunUser, true); err != nil {
 		rollback()
-		http.Redirect(w, r, "/projects?error=复制成功，但设置目录所有者失败", http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "复制成功，但设置目录所有者失败"})
 		return
 	}
 	finalSlug := fmt.Sprintf("p%d", newProjectID)
 	if err := s.store.UpdateProjectIdentity(newProjectID, finalSlug, newProjectPath); err != nil {
 		rollback()
-		s.serverError(w, err)
+		log.Printf("clone update identity failed: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": "服务器内部错误"})
 		return
 	}
 
@@ -779,24 +816,30 @@ func (s *Server) handleCloneProject(w http.ResponseWriter, r *http.Request, sour
 	}
 	if err := s.store.UpdateProjectConfig(newProjectID, entryFile, args, sourceProject.RunUser); err != nil {
 		rollback()
-		s.serverError(w, err)
+		log.Printf("clone update config failed: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": "服务器内部错误"})
 		return
 	}
 
 	newProject, err := s.store.GetProjectByID(newProjectID)
 	if err != nil || newProject == nil {
 		rollback()
-		s.serverError(w, fmt.Errorf("load cloned project failed"))
+		log.Printf("load cloned project failed: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": "服务器内部错误"})
 		return
 	}
 	if newProject.EntryFile.Valid && strings.TrimSpace(newProject.EntryFile.String) != "" {
 		if err := s.sup.ApplyProject(*newProject); err != nil {
 			rollback()
-			http.Redirect(w, r, fmt.Sprintf("/projects?error=复制完成，但应用Supervisor配置失败：%s", urlEscape(err.Error())), http.StatusFound)
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "复制完成，但应用Supervisor配置失败：" + err.Error()})
 			return
 		}
 	}
-	http.Redirect(w, r, "/projects?info=项目复制成功（新项目默认未启动）", http.StatusFound)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":         true,
+		"message":    "项目复制成功（新项目默认未启动）",
+		"project_id": newProjectID,
+	})
 }
 
 func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, projectID int64) {
@@ -804,57 +847,42 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, projec
 		http.NotFound(w, r)
 		return
 	}
+	if !requireAJAX(w, r) {
+		return
+	}
 	project, err := s.store.GetProjectByID(projectID)
 	if err != nil || project == nil {
 		http.NotFound(w, r)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=请求参数错误", projectID), http.StatusFound)
+	var req struct {
+		RelPath string `json:"rel_path"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请求参数错误"})
 		return
 	}
-	returnDir := normalizeUploadRelPath(r.FormValue("return_dir"))
-	redirectToProject := func(query string) string {
-		if returnDir == "" {
-			return fmt.Sprintf("/projects/%d%s", projectID, query)
-		}
-		joiner := "?"
-		if strings.HasPrefix(query, "?") {
-			joiner = ""
-		}
-		if query == "" {
-			joiner = "?"
-		}
-		encodedDir := "dir=" + urlEscape(returnDir)
-		if query == "" {
-			return fmt.Sprintf("/projects/%d?%s", projectID, encodedDir)
-		}
-		if strings.Contains(query, "?") {
-			return fmt.Sprintf("/projects/%d%s&%s", projectID, query, encodedDir)
-		}
-		return fmt.Sprintf("/projects/%d%s%s&%s", projectID, joiner, strings.TrimPrefix(query, "?"), encodedDir)
-	}
-	relPath := normalizeUploadRelPath(r.FormValue("rel_path"))
+	relPath := normalizeUploadRelPath(req.RelPath)
 	if relPath == "" {
-		http.Redirect(w, r, redirectToProject("?error=文件路径不合法"), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "文件路径不合法"})
 		return
 	}
 	targetPath, err := safeJoin(project.Path, relPath)
 	if err != nil {
-		http.Redirect(w, r, redirectToProject("?error=文件路径不合法"), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "文件路径不合法"})
 		return
 	}
 	info, err := os.Stat(targetPath)
 	if err != nil {
-		http.Redirect(w, r, redirectToProject("?error="+urlEscape("文件不存在或无权限访问："+err.Error())), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "文件不存在或无权限访问：" + err.Error()})
 		return
 	}
 	if info.IsDir() {
-		http.Redirect(w, r, redirectToProject("?error=仅支持删除文件"), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "仅支持删除文件"})
 		return
 	}
 	if err := os.Remove(targetPath); err != nil {
-		http.Redirect(w, r, redirectToProject("?error="+urlEscape("删除失败："+err.Error())), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "删除失败：" + err.Error()})
 		return
 	}
 	cleanupEmptyParents(project.Path, filepath.Dir(targetPath))
@@ -867,10 +895,10 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, projec
 		if err := s.store.UpdateProjectConfig(project.ID, "", args, project.RunUser); err == nil {
 			_ = s.sup.RemoveProject(project.Slug)
 		}
-		http.Redirect(w, r, redirectToProject("?info=文件已删除，主程序配置已清空"), http.StatusFound)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "文件已删除，主程序配置已清空"})
 		return
 	}
-	http.Redirect(w, r, redirectToProject("?info=文件已删除"), http.StatusFound)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "文件已删除"})
 }
 
 func (s *Server) handleCreateDir(w http.ResponseWriter, r *http.Request, projectID int64) {
@@ -878,19 +906,26 @@ func (s *Server) handleCreateDir(w http.ResponseWriter, r *http.Request, project
 		http.NotFound(w, r)
 		return
 	}
+	if !requireAJAX(w, r) {
+		return
+	}
 	project, err := s.store.GetProjectByID(projectID)
 	if err != nil || project == nil {
 		http.NotFound(w, r)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Redirect(w, r, projectDirURL(projectID, "", "error", "请求参数错误"), http.StatusFound)
+	var req struct {
+		CurrentDir string `json:"current_dir"`
+		Name       string `json:"name"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请求参数错误"})
 		return
 	}
-	currentDir := normalizeUploadRelPath(r.FormValue("current_dir"))
-	name := strings.TrimSpace(r.FormValue("name"))
+	currentDir := normalizeUploadRelPath(req.CurrentDir)
+	name := strings.TrimSpace(req.Name)
 	if !isSimplePathName(name) {
-		http.Redirect(w, r, projectDirURL(projectID, currentDir, "error", "文件夹名称不合法"), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "文件夹名称不合法"})
 		return
 	}
 	targetRel := name
@@ -899,15 +934,15 @@ func (s *Server) handleCreateDir(w http.ResponseWriter, r *http.Request, project
 	}
 	targetPath, err := safeJoin(project.Path, targetRel)
 	if err != nil {
-		http.Redirect(w, r, projectDirURL(projectID, currentDir, "error", "文件夹路径不合法"), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "文件夹路径不合法"})
 		return
 	}
 	if err := os.MkdirAll(targetPath, 0o775); err != nil {
-		http.Redirect(w, r, projectDirURL(projectID, currentDir, "error", "创建文件夹失败"), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "创建文件夹失败"})
 		return
 	}
 	_ = syncOwnership(targetPath, project.RunUser, false)
-	http.Redirect(w, r, projectDirURL(projectID, currentDir, "info", "文件夹已创建"), http.StatusFound)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "文件夹已创建"})
 }
 
 func (s *Server) handleCreateFile(w http.ResponseWriter, r *http.Request, projectID int64) {
@@ -915,19 +950,26 @@ func (s *Server) handleCreateFile(w http.ResponseWriter, r *http.Request, projec
 		http.NotFound(w, r)
 		return
 	}
+	if !requireAJAX(w, r) {
+		return
+	}
 	project, err := s.store.GetProjectByID(projectID)
 	if err != nil || project == nil {
 		http.NotFound(w, r)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Redirect(w, r, projectDirURL(projectID, "", "error", "请求参数错误"), http.StatusFound)
+	var req struct {
+		CurrentDir string `json:"current_dir"`
+		Name       string `json:"name"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请求参数错误"})
 		return
 	}
-	currentDir := normalizeUploadRelPath(r.FormValue("current_dir"))
-	name := strings.TrimSpace(r.FormValue("name"))
+	currentDir := normalizeUploadRelPath(req.CurrentDir)
+	name := strings.TrimSpace(req.Name)
 	if !isSimplePathName(name) {
-		http.Redirect(w, r, projectDirURL(projectID, currentDir, "error", "文件名不合法"), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "文件名不合法"})
 		return
 	}
 	targetRel := name
@@ -936,21 +978,21 @@ func (s *Server) handleCreateFile(w http.ResponseWriter, r *http.Request, projec
 	}
 	targetPath, err := safeJoin(project.Path, targetRel)
 	if err != nil {
-		http.Redirect(w, r, projectDirURL(projectID, currentDir, "error", "文件路径不合法"), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "文件路径不合法"})
 		return
 	}
 	if _, err := os.Stat(targetPath); err == nil {
-		http.Redirect(w, r, projectDirURL(projectID, currentDir, "error", "文件已存在"), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "文件已存在"})
 		return
 	}
 	f, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o664)
 	if err != nil {
-		http.Redirect(w, r, projectDirURL(projectID, currentDir, "error", "创建文件失败"), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "创建文件失败"})
 		return
 	}
 	_ = f.Close()
 	_ = syncOwnership(targetPath, project.RunUser, false)
-	http.Redirect(w, r, projectDirURL(projectID, currentDir, "info", "文件已创建"), http.StatusFound)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "文件已创建"})
 }
 
 func (s *Server) handleDeleteDir(w http.ResponseWriter, r *http.Request, projectID int64) {
@@ -958,37 +1000,42 @@ func (s *Server) handleDeleteDir(w http.ResponseWriter, r *http.Request, project
 		http.NotFound(w, r)
 		return
 	}
+	if !requireAJAX(w, r) {
+		return
+	}
 	project, err := s.store.GetProjectByID(projectID)
 	if err != nil || project == nil {
 		http.NotFound(w, r)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Redirect(w, r, projectDirURL(projectID, "", "error", "请求参数错误"), http.StatusFound)
+	var req struct {
+		RelPath string `json:"rel_path"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请求参数错误"})
 		return
 	}
-	returnDir := normalizeUploadRelPath(r.FormValue("return_dir"))
-	relPath := normalizeUploadRelPath(r.FormValue("rel_path"))
+	relPath := normalizeUploadRelPath(req.RelPath)
 	if relPath == "" {
-		http.Redirect(w, r, projectDirURL(projectID, returnDir, "error", "目录路径不合法"), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "目录路径不合法"})
 		return
 	}
 	targetPath, err := safeJoin(project.Path, relPath)
 	if err != nil {
-		http.Redirect(w, r, projectDirURL(projectID, returnDir, "error", "目录路径不合法"), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "目录路径不合法"})
 		return
 	}
 	info, err := os.Stat(targetPath)
 	if err != nil {
-		http.Redirect(w, r, projectDirURL(projectID, returnDir, "error", "目录不存在或无权限访问"), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "目录不存在或无权限访问"})
 		return
 	}
 	if !info.IsDir() {
-		http.Redirect(w, r, projectDirURL(projectID, returnDir, "error", "目标不是目录"), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "目标不是目录"})
 		return
 	}
 	if err := os.RemoveAll(targetPath); err != nil {
-		http.Redirect(w, r, projectDirURL(projectID, returnDir, "error", "删除目录失败"), http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "删除目录失败"})
 		return
 	}
 	cleanupEmptyParents(project.Path, filepath.Dir(targetPath))
@@ -1003,11 +1050,11 @@ func (s *Server) handleDeleteDir(w http.ResponseWriter, r *http.Request, project
 			if err := s.store.UpdateProjectConfig(project.ID, "", args, project.RunUser); err == nil {
 				_ = s.sup.RemoveProject(project.Slug)
 			}
-			http.Redirect(w, r, projectDirURL(projectID, returnDir, "info", "目录已删除，主程序配置已清空"), http.StatusFound)
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "目录已删除，主程序配置已清空"})
 			return
 		}
 	}
-	http.Redirect(w, r, projectDirURL(projectID, returnDir, "info", "目录已删除"), http.StatusFound)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "目录已删除"})
 }
 
 func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request, projectID int64) {
@@ -1098,52 +1145,62 @@ func (s *Server) handleEditFile(w http.ResponseWriter, r *http.Request, projectI
 		return
 
 	case http.MethodPost:
-		if err := r.ParseForm(); err != nil {
-			http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=请求参数错误", projectID), http.StatusFound)
+		if !requireAJAX(w, r) {
 			return
 		}
-		relPath := normalizeUploadRelPath(r.FormValue("path"))
-		content := r.FormValue("content")
-		mtimeRaw := strings.TrimSpace(r.FormValue("mtime_nano"))
+		var req struct {
+			Path      string `json:"path"`
+			Content   string `json:"content"`
+			MtimeNano int64  `json:"mtime_nano"`
+		}
+		if err := decodeJSONBody(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请求参数错误"})
+			return
+		}
+		relPath := normalizeUploadRelPath(req.Path)
+		content := req.Content
 		if relPath == "" || !isEditableTextFile(relPath) {
-			http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=该文件类型不支持在线编辑", projectID), http.StatusFound)
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "该文件类型不支持在线编辑"})
 			return
 		}
 		if len(content) > maxEditableFileSize {
-			http.Redirect(w, r, fmt.Sprintf("/projects/%d/files/edit?path=%s&error=%s", projectID, urlEscape(relPath), urlEscape("文件超过1MB，禁止在线编辑")), http.StatusFound)
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "文件超过1MB，禁止在线编辑"})
 			return
 		}
 		filePath, err := safeJoin(project.Path, relPath)
 		if err != nil {
-			http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=文件路径不合法", projectID), http.StatusFound)
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "文件路径不合法"})
 			return
 		}
 		info, err := os.Stat(filePath)
 		if err != nil {
-			http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=文件不存在", projectID), http.StatusFound)
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "文件不存在"})
 			return
 		}
-		if mtimeRaw != "" {
-			if oldMtime, parseErr := strconv.ParseInt(mtimeRaw, 10, 64); parseErr == nil {
-				if oldMtime != info.ModTime().UnixNano() {
-					http.Redirect(w, r, fmt.Sprintf("/projects/%d/files/edit?path=%s&error=%s", projectID, urlEscape(relPath), urlEscape("文件已被其他操作修改，请刷新后重试")), http.StatusFound)
-					return
-				}
+		if req.MtimeNano > 0 {
+			if req.MtimeNano != info.ModTime().UnixNano() {
+				writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "message": "文件已被其他操作修改，请刷新后重试"})
+				return
 			}
 		}
 		bytesContent := []byte(content)
 		if !isTextContent(bytesContent) {
-			http.Redirect(w, r, fmt.Sprintf("/projects/%d/files/edit?path=%s&error=%s", projectID, urlEscape(relPath), urlEscape("内容包含非文本数据")), http.StatusFound)
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "内容包含非文本数据"})
 			return
 		}
 		if err := writeFileAtomic(filePath, bytesContent, info.Mode()); err != nil {
-			http.Redirect(w, r, fmt.Sprintf("/projects/%d/files/edit?path=%s&error=%s", projectID, urlEscape(relPath), urlEscape("保存失败："+err.Error())), http.StatusFound)
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "保存失败：" + err.Error()})
 			return
 		}
 		if err := syncOwnership(filePath, project.RunUser, false); err != nil {
 			log.Printf("warn: sync ownership failed after edit: %v", err)
 		}
-		http.Redirect(w, r, fmt.Sprintf("/projects/%d/files/edit?path=%s&info=%s", projectID, urlEscape(relPath), urlEscape("保存成功")), http.StatusFound)
+		st, statErr := os.Stat(filePath)
+		nextMtime := int64(0)
+		if statErr == nil {
+			nextMtime = st.ModTime().UnixNano()
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "保存成功", "mtime_nano": nextMtime})
 		return
 
 	default:
@@ -1164,40 +1221,49 @@ func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if !requireAJAX(w, r) {
+		return
+	}
 	adminID, ok := adminIDFromContext(r.Context())
 	if !ok {
-		http.Redirect(w, r, "/login", http.StatusFound)
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "message": "未登录或会话已过期"})
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Redirect(w, r, "/account/password?error=请求参数错误", http.StatusFound)
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请求参数错误"})
 		return
 	}
-	current := r.FormValue("current_password")
-	newPass := r.FormValue("new_password")
+	current := req.CurrentPassword
+	newPass := req.NewPassword
 	if len(strings.TrimSpace(newPass)) < 8 {
-		http.Redirect(w, r, "/account/password?error=新密码至少8位", http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "新密码至少8位"})
 		return
 	}
 	admin, err := s.store.GetAdminByID(adminID)
 	if err != nil || admin == nil {
-		http.Redirect(w, r, "/account/password?error=管理员不存在", http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "管理员不存在"})
 		return
 	}
 	if auth.VerifyPassword(admin.PasswordHash, current) != nil {
-		http.Redirect(w, r, "/account/password?error=当前密码错误", http.StatusFound)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "当前密码错误"})
 		return
 	}
 	hash, err := auth.HashPassword(newPass)
 	if err != nil {
-		s.serverError(w, err)
+		log.Printf("hash password failed: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": "服务器内部错误"})
 		return
 	}
 	if err := s.store.UpdateAdminPassword(adminID, hash); err != nil {
-		s.serverError(w, err)
+		log.Printf("update password failed: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": "服务器内部错误"})
 		return
 	}
-	http.Redirect(w, r, "/account/password?info=密码修改成功", http.StatusFound)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "密码修改成功"})
 }
 
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -1595,34 +1661,25 @@ func ensureExecutable(path string, mode os.FileMode) error {
 }
 
 func (s *Server) respondUploadResult(w http.ResponseWriter, r *http.Request, projectID int64, receivedCount, savedCount int, message string, isError bool, failSummary string) {
-	if isAJAXRequest(r) {
-		w.Header().Set("Content-Type", "application/json")
-		status := http.StatusOK
-		if isError {
-			status = http.StatusBadRequest
-		}
-		w.WriteHeader(status)
-		failedCount := receivedCount - savedCount
-		if failedCount < 0 {
-			failedCount = 0
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":             !isError,
-			"count":          savedCount,
-			"received_count": receivedCount,
-			"saved_count":    savedCount,
-			"failed_count":   failedCount,
-			"failed_summary": failSummary,
-			"message":        message,
-			"redirect":       fmt.Sprintf("/projects/%d", projectID),
-		})
-		return
-	}
-	queryKey := "info"
+	_ = r
+	status := http.StatusOK
 	if isError {
-		queryKey = "error"
+		status = http.StatusBadRequest
 	}
-	http.Redirect(w, r, fmt.Sprintf("/projects/%d?%s=%s", projectID, queryKey, urlEscape(message)), http.StatusFound)
+	failedCount := receivedCount - savedCount
+	if failedCount < 0 {
+		failedCount = 0
+	}
+	writeJSON(w, status, map[string]any{
+		"ok":             !isError,
+		"count":          savedCount,
+		"received_count": receivedCount,
+		"saved_count":    savedCount,
+		"failed_count":   failedCount,
+		"failed_summary": failSummary,
+		"message":        message,
+		"redirect":       fmt.Sprintf("/projects/%d", projectID),
+	})
 }
 
 func summarizeFailReasons(reasonCount map[string]int) string {
@@ -1641,25 +1698,43 @@ func summarizeFailReasons(reasonCount map[string]int) string {
 }
 
 func (s *Server) respondProjectConfigResult(w http.ResponseWriter, r *http.Request, projectID int64, message string, isError bool, currentEntry string) {
-	if isAJAXRequest(r) {
-		w.Header().Set("Content-Type", "application/json")
-		status := http.StatusOK
-		if isError {
-			status = http.StatusBadRequest
-		}
-		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":            !isError,
-			"message":       message,
-			"current_entry": currentEntry,
-		})
-		return
-	}
-	queryKey := "info"
+	_ = r
+	_ = projectID
+	status := http.StatusOK
 	if isError {
-		queryKey = "error"
+		status = http.StatusBadRequest
 	}
-	http.Redirect(w, r, fmt.Sprintf("/projects/%d?%s=%s", projectID, queryKey, urlEscape(message)), http.StatusFound)
+	writeJSON(w, status, map[string]any{
+		"ok":            !isError,
+		"message":       message,
+		"current_entry": currentEntry,
+	})
+}
+
+func decodeJSONBody(r *http.Request, dst any) error {
+	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("invalid json body")
+	}
+	return nil
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func requireAJAX(w http.ResponseWriter, r *http.Request) bool {
+	if isAJAXRequest(r) {
+		return true
+	}
+	writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "仅支持AJAX请求"})
+	return false
 }
 
 func isAJAXRequest(r *http.Request) bool {

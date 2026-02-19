@@ -54,6 +54,7 @@
     }
     .msg { margin: 10px 0; padding: 10px 12px; border-radius: 10px; font-size: 14px; }
     .err { background: #fce8e7; color: var(--danger); }
+    .hidden { display: none; }
   </style>
 </head>
 <body>
@@ -61,7 +62,8 @@
     <h1>SupervisorPanel</h1>
     <p>管理员登录</p>
     {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}
-    <form action="/login" method="post">
+    <div id="loginHint" class="msg err hidden"></div>
+    <form id="loginForm" action="/login" method="post">
       <label for="username">用户名</label>
       <input id="username" name="username" autocomplete="username" required>
       <label for="password">密码</label>
@@ -69,6 +71,63 @@
       <button type="submit">登录</button>
     </form>
   </main>
+  <script>
+    (function () {
+      const form = document.getElementById('loginForm');
+      const hint = document.getElementById('loginHint');
+      if (!form || !hint) {
+        return;
+      }
+      function setHint(text) {
+        hint.textContent = text || '';
+        hint.classList.toggle('hidden', !text);
+      }
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const userInput = document.getElementById('username');
+        const passInput = document.getElementById('password');
+        const username = (userInput && userInput.value || '').trim();
+        const password = (passInput && passInput.value) || '';
+        if (!username || !password) {
+          setHint('请输入用户名和密码');
+          return;
+        }
+        const button = form.querySelector('button[type="submit"]');
+        const oldText = button ? button.textContent : '';
+        if (button) {
+          button.disabled = true;
+          button.textContent = '登录中...';
+        }
+        try {
+          const resp = await fetch(form.getAttribute('action') || '/login', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({ username: username, password: password })
+          });
+          let data = {};
+          try {
+            data = await resp.json();
+          } catch (err) {}
+          if (!resp.ok || !data.ok) {
+            setHint(data.message || '登录失败');
+            return;
+          }
+          window.location.href = data.redirect || '/projects';
+        } catch (err) {
+          setHint('登录失败，请稍后重试');
+        } finally {
+          if (button) {
+            button.disabled = false;
+            button.textContent = oldText || '登录';
+          }
+        }
+      });
+    })();
+  </script>
 </body>
 </html>
 {{end}}
@@ -87,7 +146,7 @@
     {{template "topbar" .}}
     <section class="panel">
       <h2>创建项目</h2>
-      <form class="inline-form" method="post" action="/projects">
+      <form id="createProjectForm" class="inline-form" method="post" action="/projects">
         <input name="name" placeholder="例如：order-service" required>
         <button type="submit">创建</button>
       </form>
@@ -119,24 +178,17 @@
             <td>{{.UpdatedAt}}</td>
             <td>
               <a class="btn ghost" href="/projects/{{.ID}}">编辑</a>
-              <form id="action-stop-{{.ID}}" class="inline-mini list-action-form" method="post" action="/projects/{{.ID}}/action" data-project-id="{{.ID}}" {{if ne $status "RUNNING"}}style="display:none"{{end}}>
-                <input type="hidden" name="action" value="stop">
-                <input type="hidden" name="redirect_to" value="list">
+              <form id="action-stop-{{.ID}}" class="inline-mini list-action-form" method="post" action="/projects/{{.ID}}/action" data-project-id="{{.ID}}" data-action="stop" {{if ne $status "RUNNING"}}style="display:none"{{end}}>
                 <button class="ghost" type="submit">停止</button>
               </form>
-              <form id="action-start-{{.ID}}" class="inline-mini list-action-form" method="post" action="/projects/{{.ID}}/action" data-project-id="{{.ID}}" {{if eq $status "RUNNING"}}style="display:none"{{end}}>
-                <input type="hidden" name="action" value="start">
-                <input type="hidden" name="redirect_to" value="list">
+              <form id="action-start-{{.ID}}" class="inline-mini list-action-form" method="post" action="/projects/{{.ID}}/action" data-project-id="{{.ID}}" data-action="start" {{if eq $status "RUNNING"}}style="display:none"{{end}}>
                 <button type="submit">启动</button>
               </form>
-              <form class="inline-mini list-action-form" method="post" action="/projects/{{.ID}}/action" data-project-id="{{.ID}}">
-                <input type="hidden" name="action" value="restart">
-                <input type="hidden" name="redirect_to" value="list">
+              <form class="inline-mini list-action-form" method="post" action="/projects/{{.ID}}/action" data-project-id="{{.ID}}" data-action="restart">
                 <button class="ghost" type="submit">重启</button>
               </form>
               <button class="ghost clone-open-btn" type="button" data-clone-action="/projects/{{.ID}}/clone" data-project-name="{{.Name}}">复制</button>
-              <form class="inline-mini" method="post" action="/projects/{{.ID}}/delete" onsubmit="return confirm('确认删除项目 {{.Name}} 吗？');">
-                <input type="hidden" name="confirm_name" value="{{.Name}}">
+              <form class="inline-mini list-delete-form" method="post" action="/projects/{{.ID}}/delete" data-project-name="{{.Name}}">
                 <button class="danger" type="submit">删除</button>
               </form>
             </td>
@@ -248,10 +300,24 @@
         hint.classList.add(isError ? 'err' : 'ok');
       }
 
+      async function parseJSON(resp) {
+        try {
+          return await resp.json();
+        } catch (err) {
+          return {};
+        }
+      }
+
       async function submitAction(form) {
         const button = form.querySelector('button[type="submit"]');
         const projectID = form.getAttribute('data-project-id');
+        const action = (form.getAttribute('data-action') || '').trim();
+        const actionURL = form.getAttribute('action') || '';
         if (!projectID) {
+          return;
+        }
+        if (!action || !actionURL) {
+          setHint('操作入口异常，请刷新后重试', true);
           return;
         }
         const previousLabel = button ? button.textContent : '';
@@ -260,16 +326,16 @@
           button.textContent = '执行中...';
         }
         try {
-          const formData = new FormData(form);
-          const resp = await fetch(form.action, {
+          const resp = await fetch(actionURL, {
             method: 'POST',
-            body: formData,
             headers: {
+              'Content-Type': 'application/json',
               'Accept': 'application/json',
               'X-Requested-With': 'XMLHttpRequest'
-            }
+            },
+            body: JSON.stringify({ action: action })
           });
-          const data = await resp.json();
+          const data = await parseJSON(resp);
           if (!resp.ok || !data.ok) {
             setHint(data.message || '操作失败', true);
             return;
@@ -300,6 +366,99 @@
         form.addEventListener('submit', function (e) {
           e.preventDefault();
           submitAction(form);
+        });
+      });
+
+      const createProjectForm = document.getElementById('createProjectForm');
+      if (createProjectForm) {
+        createProjectForm.addEventListener('submit', async function (e) {
+          e.preventDefault();
+          const nameInput = createProjectForm.querySelector('input[name="name"]');
+          const name = (nameInput && nameInput.value || '').trim();
+          if (!name) {
+            setHint('项目名不能为空', true);
+            return;
+          }
+          const submitBtn = createProjectForm.querySelector('button[type="submit"]');
+          const oldText = submitBtn ? submitBtn.textContent : '';
+          if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.textContent = '创建中...';
+          }
+          try {
+            const resp = await fetch(createProjectForm.getAttribute('action') || '/projects', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+              },
+              body: JSON.stringify({ name: name })
+            });
+            const data = await parseJSON(resp);
+            if (!resp.ok || !data.ok) {
+              setHint(data.message || '创建失败', true);
+              return;
+            }
+            setHint(data.message || '创建成功', false);
+            setTimeout(function () {
+              window.location.reload();
+            }, 300);
+          } catch (err) {
+            setHint('创建失败，请稍后重试', true);
+          } finally {
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              submitBtn.textContent = oldText || '创建';
+            }
+          }
+        });
+      }
+
+      document.querySelectorAll('.list-delete-form').forEach(function (form) {
+        form.addEventListener('submit', async function (e) {
+          e.preventDefault();
+          const projectName = (form.getAttribute('data-project-name') || '').trim();
+          if (!projectName) {
+            setHint('删除入口异常，请刷新后重试', true);
+            return;
+          }
+          if (!window.confirm('确认删除项目 ' + projectName + ' 吗？')) {
+            return;
+          }
+          const btn = form.querySelector('button[type="submit"]');
+          const oldText = btn ? btn.textContent : '';
+          if (btn) {
+            btn.disabled = true;
+            btn.textContent = '删除中...';
+          }
+          try {
+            const resp = await fetch(form.getAttribute('action') || '', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+              },
+              body: JSON.stringify({ confirm_name: projectName })
+            });
+            const data = await parseJSON(resp);
+            if (!resp.ok || !data.ok) {
+              setHint(data.message || '删除失败', true);
+              return;
+            }
+            setHint(data.message || '删除成功', false);
+            setTimeout(function () {
+              window.location.reload();
+            }, 300);
+          } catch (err) {
+            setHint('删除失败，请稍后重试', true);
+          } finally {
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = oldText || '删除';
+            }
+          }
         });
       });
 
@@ -366,13 +525,50 @@
       });
 
       if (cloneModalForm) {
-        cloneModalForm.addEventListener('submit', function (e) {
+        cloneModalForm.addEventListener('submit', async function (e) {
+          e.preventDefault();
           if (!cloneNameInput || !cloneNameInput.value.trim()) {
-            e.preventDefault();
             setHint('新项目名称不能为空', true);
             return;
           }
           cloneNameInput.value = cloneNameInput.value.trim();
+          const submitBtn = cloneModalForm.querySelector('button[type="submit"]');
+          const oldText = submitBtn ? submitBtn.textContent : '';
+          if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.textContent = '复制中...';
+          }
+          try {
+            const resp = await fetch(cloneModalForm.getAttribute('action') || '', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+              },
+              body: JSON.stringify({
+                name: cloneNameInput.value,
+                include_symlinks: !!(cloneSymlinkInput && cloneSymlinkInput.checked)
+              })
+            });
+            const data = await parseJSON(resp);
+            if (!resp.ok || !data.ok) {
+              setHint(data.message || '复制失败', true);
+              return;
+            }
+            setHint(data.message || '复制成功', false);
+            closeCloneModal();
+            setTimeout(function () {
+              window.location.reload();
+            }, 300);
+          } catch (err) {
+            setHint('复制失败，请稍后重试', true);
+          } finally {
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              submitBtn.textContent = oldText || '确认复制';
+            }
+          }
         });
       }
 
@@ -430,7 +626,6 @@
       <div>
         <h3>主程序配置</h3>
         <form id="projectConfigForm" method="post" action="/projects/{{.Project.ID}}/config">
-          <input type="hidden" name="entry_file" value="{{.CurrentEntry}}">
           <label>启动参数</label>
           <input id="projectArgsInput" name="args" value="{{.CurrentArgs}}" placeholder="例如：--port 9000 --env prod">
           <label>运行用户</label>
@@ -442,10 +637,11 @@
         <p id="entryHint" class="hint"></p>
 
         <div class="actions">
-          <form method="post" action="/projects/{{.Project.ID}}/action"><input type="hidden" name="action" value="start"><button type="submit">启动</button></form>
-          <form method="post" action="/projects/{{.Project.ID}}/action"><input type="hidden" name="action" value="stop"><button class="ghost" type="submit">停止</button></form>
-          <form method="post" action="/projects/{{.Project.ID}}/action"><input type="hidden" name="action" value="restart"><button class="ghost" type="submit">重启</button></form>
+          <form class="inline-mini project-action-form" method="post" action="/projects/{{.Project.ID}}/action" data-action="start"><button type="submit">启动</button></form>
+          <form class="inline-mini project-action-form" method="post" action="/projects/{{.Project.ID}}/action" data-action="stop"><button class="ghost" type="submit">停止</button></form>
+          <form class="inline-mini project-action-form" method="post" action="/projects/{{.Project.ID}}/action" data-action="restart"><button class="ghost" type="submit">重启</button></form>
         </div>
+        <p id="runtimeHint" class="hint"></p>
       </div>
     </section>
 
@@ -462,18 +658,17 @@
           {{if .CurrentDir}}
           <a class="btn ghost" href="/projects/{{.Project.ID}}{{if .ParentDir}}?dir={{.ParentDir | urlquery}}{{end}}">上一级</a>
           {{end}}
-          <form class="inline-mini" method="post" action="/projects/{{.Project.ID}}/mkdir">
-            <input type="hidden" name="current_dir" value="{{.CurrentDir}}">
+          <form class="inline-mini create-dir-form" method="post" action="/projects/{{.Project.ID}}/mkdir" data-current-dir="{{.CurrentDir}}">
             <input class="small-input" name="name" placeholder="新建文件夹" required>
             <button class="ghost" type="submit">创建</button>
           </form>
-          <form class="inline-mini" method="post" action="/projects/{{.Project.ID}}/create-file">
-            <input type="hidden" name="current_dir" value="{{.CurrentDir}}">
+          <form class="inline-mini create-file-form" method="post" action="/projects/{{.Project.ID}}/create-file" data-current-dir="{{.CurrentDir}}">
             <input class="small-input" name="name" placeholder="新建文件" required>
             <button class="ghost" type="submit">创建</button>
           </form>
         </div>
       </div>
+      <p id="explorerHint" class="hint"></p>
       {{if not .Entries}}
         <p class="hint">暂无文件，请先上传。</p>
       {{else}}
@@ -484,9 +679,7 @@
             <code>{{.Name}}/</code>
             <div class="file-actions">
               <a class="btn ghost" href="/projects/{{$.Project.ID}}?dir={{.Path | urlquery}}">进入</a>
-              <form class="inline-mini" method="post" action="/projects/{{$.Project.ID}}/delete-dir" onsubmit="return confirm('确认删除目录 {{.Path}} 及其全部内容吗？');">
-                <input type="hidden" name="rel_path" value="{{.Path}}">
-                <input type="hidden" name="return_dir" value="{{$.CurrentDir}}">
+              <form class="inline-mini delete-dir-form" method="post" action="/projects/{{$.Project.ID}}/delete-dir" data-rel-path="{{.Path}}" data-confirm="确认删除目录 {{.Path}} 及其全部内容吗？">
                 <button class="danger" type="submit">删除</button>
               </form>
             </div>
@@ -497,18 +690,13 @@
             <div class="file-actions">
               <span class="entry-badge {{if not .IsCurrent}}hidden{{end}}">当前主程序</span>
               <form class="inline-mini set-entry-form {{if .IsCurrent}}hidden{{end}}" method="post" action="/projects/{{$.Project.ID}}/config" data-file-path="{{.Path}}">
-                <input type="hidden" name="entry_file" value="{{.Path}}">
-                <input type="hidden" name="args" value="">
-                <input type="hidden" name="run_user" value="">
                 <button class="ghost" type="submit">设为主程序</button>
               </form>
               {{if .Editable}}
               <a class="btn ghost" href="/projects/{{$.Project.ID}}/files/edit?path={{.Path | urlquery}}">编辑</a>
               {{end}}
               <a class="btn ghost" href="/projects/{{$.Project.ID}}/download?path={{.Path | urlquery}}{{if $.CurrentDir}}&dir={{$.CurrentDir | urlquery}}{{end}}">下载</a>
-              <form class="inline-mini" method="post" action="/projects/{{$.Project.ID}}/delete-file" onsubmit="return confirm('确认删除文件 {{.Path}} 吗？');">
-                <input type="hidden" name="rel_path" value="{{.Path}}">
-                <input type="hidden" name="return_dir" value="{{$.CurrentDir}}">
+              <form class="inline-mini delete-file-form" method="post" action="/projects/{{$.Project.ID}}/delete-file" data-rel-path="{{.Path}}" data-confirm="确认删除文件 {{.Path}} 吗？">
                 <button class="danger" type="submit">删除</button>
               </form>
             </div>
@@ -522,7 +710,7 @@
     <section class="panel danger-panel">
       <h3>危险操作</h3>
       <p class="hint">删除项目会清理项目目录、数据库记录和 Supervisor 配置，无法恢复。</p>
-      <form method="post" action="/projects/{{.Project.ID}}/delete" onsubmit="return confirm('此操作不可恢复，确认删除项目 {{.Project.Name}} 吗？');">
+      <form id="deleteProjectForm" method="post" action="/projects/{{.Project.ID}}/delete" data-confirm="此操作不可恢复，确认删除项目 {{.Project.Name}} 吗？">
         <label>输入项目名确认删除</label>
         <input name="confirm_name" placeholder="{{.Project.Name}}" required>
         <button class="danger" type="submit">删除项目</button>
@@ -536,12 +724,23 @@
     const pickFilesInput = document.getElementById('pickFilesInput');
     const projectConfigForm = document.getElementById('projectConfigForm');
     const uploadHint = document.getElementById('uploadHint');
+    const runtimeHint = document.getElementById('runtimeHint');
+    const explorerHint = document.getElementById('explorerHint');
     const uploadURL = '/projects/{{.Project.ID}}/upload';
     if (!dropzone || !pickUploadBtn || !pickFilesInput || !projectConfigForm || !uploadHint) {
       return;
     }
 
     let uploading = false;
+    let currentEntryPath = {{printf "%q" .CurrentEntry}};
+
+    async function parseJSON(resp) {
+      try {
+        return await resp.json();
+      } catch (err) {
+        return {};
+      }
+    }
 
     function setHint(message, type) {
       uploadHint.textContent = message || '';
@@ -588,7 +787,7 @@
             'Accept': 'application/json'
           }
         });
-        const data = await resp.json();
+        const data = await parseJSON(resp);
         if (!resp.ok || !data.ok) {
           setHint(data.message || '上传失败', 'err');
           return;
@@ -804,10 +1003,7 @@
     }
 
     function markCurrentEntry(path) {
-      const configEntryInput = document.querySelector('form[action="/projects/{{.Project.ID}}/config"] input[name="entry_file"]');
-      if (configEntryInput) {
-        configEntryInput.value = path;
-      }
+      currentEntryPath = path || '';
       document.querySelectorAll('.file-row').forEach(function (row) {
         const rowPath = row.getAttribute('data-file-path') || '';
         const badge = row.querySelector('.entry-badge');
@@ -830,7 +1026,6 @@
         const argsInput = document.getElementById('projectArgsInput');
         const runUserInput = document.getElementById('projectRunUserInput');
         const entryPath = (form.getAttribute('data-file-path') || '').trim();
-        const hiddenEntry = form.querySelector('input[name="entry_file"]');
         const submitBtn = form.querySelector('button[type="submit"]');
         if (!entryPath) {
           setEntryHint('未读取到主程序路径，请刷新后重试', 'err');
@@ -842,25 +1037,25 @@
           submitBtn.textContent = '应用中...';
         }
         try {
-          const fd = new FormData();
-          fd.append('entry_file', entryPath);
-          fd.append('args', (argsInput && argsInput.value) ? argsInput.value : '');
-          fd.append('run_user', (runUserInput && runUserInput.value) ? runUserInput.value : '');
-          const resp = await fetch(form.action, {
+          const resp = await fetch(form.getAttribute('action') || '', {
             method: 'POST',
-            body: fd,
             headers: {
+              'Content-Type': 'application/json',
               'Accept': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest',
-              'X-File-Path': entryPath
-            }
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({
+              entry_file: entryPath,
+              args: (argsInput && argsInput.value) ? argsInput.value : '',
+              run_user: (runUserInput && runUserInput.value) ? runUserInput.value : ''
+            })
           });
-          const data = await resp.json();
+          const data = await parseJSON(resp);
           if (!resp.ok || !data.ok) {
             setEntryHint(data.message || '设置主程序失败', 'err');
             return;
           }
-          const nextEntryPath = (data.current_entry || (hiddenEntry ? hiddenEntry.value : '') || entryPath).trim();
+          const nextEntryPath = (data.current_entry || entryPath).trim();
           if (nextEntryPath) {
             markCurrentEntry(nextEntryPath);
           }
@@ -878,6 +1073,8 @@
 
     projectConfigForm.addEventListener('submit', async function (e) {
       e.preventDefault();
+      const argsInput = document.getElementById('projectArgsInput');
+      const runUserInput = document.getElementById('projectRunUserInput');
       const submitBtn = projectConfigForm.querySelector('button[type="submit"]');
       const oldText = submitBtn ? submitBtn.textContent : '';
       if (submitBtn) {
@@ -885,15 +1082,20 @@
         submitBtn.textContent = '保存中...';
       }
       try {
-        const resp = await fetch(projectConfigForm.action, {
+        const resp = await fetch(projectConfigForm.getAttribute('action') || '', {
           method: 'POST',
-          body: new FormData(projectConfigForm),
           headers: {
+            'Content-Type': 'application/json',
             'Accept': 'application/json',
             'X-Requested-With': 'XMLHttpRequest'
-          }
+          },
+          body: JSON.stringify({
+            entry_file: currentEntryPath,
+            args: (argsInput && argsInput.value) ? argsInput.value : '',
+            run_user: (runUserInput && runUserInput.value) ? runUserInput.value : ''
+          })
         });
-        const data = await resp.json();
+        const data = await parseJSON(resp);
         if (!resp.ok || !data.ok) {
           setConfigHint(data.message || '保存失败', 'err');
           return;
@@ -911,6 +1113,216 @@
         }
       }
     });
+
+    function setRuntimeHint(msg, type) {
+      if (!runtimeHint) {
+        return;
+      }
+      runtimeHint.textContent = msg || '';
+      runtimeHint.classList.remove('ok', 'err');
+      if (type === 'ok') {
+        runtimeHint.classList.add('ok');
+      }
+      if (type === 'err') {
+        runtimeHint.classList.add('err');
+      }
+    }
+
+    function setExplorerHint(msg, type) {
+      if (!explorerHint) {
+        return;
+      }
+      explorerHint.textContent = msg || '';
+      explorerHint.classList.remove('ok', 'err');
+      if (type === 'ok') {
+        explorerHint.classList.add('ok');
+      }
+      if (type === 'err') {
+        explorerHint.classList.add('err');
+      }
+    }
+
+    document.querySelectorAll('.project-action-form').forEach(function (form) {
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const action = (form.getAttribute('data-action') || '').trim();
+        if (!action) {
+          setRuntimeHint('操作入口异常，请刷新后重试', 'err');
+          return;
+        }
+        const btn = form.querySelector('button[type="submit"]');
+        const oldText = btn ? btn.textContent : '';
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = '执行中...';
+        }
+        try {
+          const resp = await fetch(form.getAttribute('action') || '', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({ action: action })
+          });
+          const data = await parseJSON(resp);
+          if (!resp.ok || !data.ok) {
+            setRuntimeHint(data.message || '操作失败', 'err');
+            return;
+          }
+          setRuntimeHint(data.message || '操作成功', 'ok');
+        } catch (err) {
+          setRuntimeHint('操作失败，请稍后重试', 'err');
+        } finally {
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = oldText || '执行';
+          }
+        }
+      });
+    });
+
+    async function submitExplorerForm(form, payload, loadingText) {
+      const btn = form.querySelector('button[type="submit"]');
+      const oldText = btn ? btn.textContent : '';
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = loadingText;
+      }
+      try {
+        const resp = await fetch(form.getAttribute('action') || '', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+          },
+          body: JSON.stringify(payload)
+        });
+        const data = await parseJSON(resp);
+        if (!resp.ok || !data.ok) {
+          setExplorerHint(data.message || '操作失败', 'err');
+          return;
+        }
+        setExplorerHint(data.message || '操作成功', 'ok');
+        setTimeout(function () {
+          window.location.reload();
+        }, 300);
+      } catch (err) {
+        setExplorerHint('操作失败，请稍后重试', 'err');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = oldText || '提交';
+        }
+      }
+    }
+
+    document.querySelectorAll('.create-dir-form').forEach(function (form) {
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const nameInput = form.querySelector('input[name="name"]');
+        const name = (nameInput && nameInput.value || '').trim();
+        if (!name) {
+          setExplorerHint('文件夹名称不能为空', 'err');
+          return;
+        }
+        await submitExplorerForm(form, {
+          current_dir: form.getAttribute('data-current-dir') || '',
+          name: name
+        }, '创建中...');
+      });
+    });
+
+    document.querySelectorAll('.create-file-form').forEach(function (form) {
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const nameInput = form.querySelector('input[name="name"]');
+        const name = (nameInput && nameInput.value || '').trim();
+        if (!name) {
+          setExplorerHint('文件名不能为空', 'err');
+          return;
+        }
+        await submitExplorerForm(form, {
+          current_dir: form.getAttribute('data-current-dir') || '',
+          name: name
+        }, '创建中...');
+      });
+    });
+
+    document.querySelectorAll('.delete-dir-form').forEach(function (form) {
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const msg = form.getAttribute('data-confirm') || '确认删除目录吗？';
+        if (!window.confirm(msg)) {
+          return;
+        }
+        await submitExplorerForm(form, {
+          rel_path: form.getAttribute('data-rel-path') || ''
+        }, '删除中...');
+      });
+    });
+
+    document.querySelectorAll('.delete-file-form').forEach(function (form) {
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const msg = form.getAttribute('data-confirm') || '确认删除文件吗？';
+        if (!window.confirm(msg)) {
+          return;
+        }
+        await submitExplorerForm(form, {
+          rel_path: form.getAttribute('data-rel-path') || ''
+        }, '删除中...');
+      });
+    });
+
+    const deleteProjectForm = document.getElementById('deleteProjectForm');
+    if (deleteProjectForm) {
+      deleteProjectForm.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const confirmMsg = deleteProjectForm.getAttribute('data-confirm') || '确认删除项目吗？';
+        if (!window.confirm(confirmMsg)) {
+          return;
+        }
+        const input = deleteProjectForm.querySelector('input[name="confirm_name"]');
+        const confirmName = (input && input.value || '').trim();
+        if (!confirmName) {
+          setExplorerHint('请输入项目名确认删除', 'err');
+          return;
+        }
+        const btn = deleteProjectForm.querySelector('button[type="submit"]');
+        const oldText = btn ? btn.textContent : '';
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = '删除中...';
+        }
+        try {
+          const resp = await fetch(deleteProjectForm.getAttribute('action') || '', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({ confirm_name: confirmName })
+          });
+          const data = await parseJSON(resp);
+          if (!resp.ok || !data.ok) {
+            setExplorerHint(data.message || '删除失败', 'err');
+            return;
+          }
+          window.location.href = '/projects';
+        } catch (err) {
+          setExplorerHint('删除失败，请稍后重试', 'err');
+        } finally {
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = oldText || '删除项目';
+          }
+        }
+      });
+    }
   })();
 </script>
 </body>
@@ -940,10 +1352,9 @@
     </section>
     {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}
     {{if .Info}}<div class="msg ok">{{.Info}}</div>{{end}}
+    <div id="editHint" class="msg hidden"></div>
     <section class="panel">
-      <form method="post" action="/projects/{{.Project.ID}}/files/edit">
-        <input type="hidden" name="path" value="{{.RelPath}}">
-        <input type="hidden" name="mtime_nano" value="{{.MtimeNano}}">
+      <form id="editFileForm" method="post" action="/projects/{{.Project.ID}}/files/edit" data-path="{{.RelPath}}" data-mtime-nano="{{.MtimeNano}}">
         <textarea class="editor" name="content" spellcheck="false">{{.Content}}</textarea>
         <div class="actions">
           <button type="submit">保存</button>
@@ -952,6 +1363,79 @@
       </form>
     </section>
   </div>
+  <script>
+    (function () {
+      const form = document.getElementById('editFileForm');
+      const hint = document.getElementById('editHint');
+      if (!form || !hint) {
+        return;
+      }
+      function setHint(msg, type) {
+        hint.textContent = msg || '';
+        hint.classList.remove('hidden', 'ok', 'err');
+        if (!msg) {
+          hint.classList.add('hidden');
+          return;
+        }
+        if (type === 'ok') {
+          hint.classList.add('ok');
+          return;
+        }
+        hint.classList.add('err');
+      }
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const textarea = form.querySelector('textarea[name="content"]');
+        const content = textarea ? textarea.value : '';
+        const path = form.getAttribute('data-path') || '';
+        const mtimeNano = Number(form.getAttribute('data-mtime-nano') || '0');
+        if (!path) {
+          setHint('文件路径缺失，请刷新后重试', 'err');
+          return;
+        }
+        const btn = form.querySelector('button[type="submit"]');
+        const oldText = btn ? btn.textContent : '';
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = '保存中...';
+        }
+        try {
+          const resp = await fetch(form.getAttribute('action') || '', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({
+              path: path,
+              content: content,
+              mtime_nano: mtimeNano
+            })
+          });
+          let data = {};
+          try {
+            data = await resp.json();
+          } catch (err) {}
+          if (!resp.ok || !data.ok) {
+            setHint(data.message || '保存失败', 'err');
+            return;
+          }
+          if (typeof data.mtime_nano === 'number' && data.mtime_nano > 0) {
+            form.setAttribute('data-mtime-nano', String(data.mtime_nano));
+          }
+          setHint(data.message || '保存成功', 'ok');
+        } catch (err) {
+          setHint('保存失败，请稍后重试', 'err');
+        } finally {
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = oldText || '保存';
+          }
+        }
+      });
+    })();
+  </script>
 </body>
 </html>
 {{end}}
@@ -1116,7 +1600,8 @@
       <h2>修改管理员密码</h2>
       {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}
       {{if .Info}}<div class="msg ok">{{.Info}}</div>{{end}}
-      <form method="post" action="/account/password">
+      <p id="passwordHint" class="hint"></p>
+      <form id="passwordForm" method="post" action="/account/password">
         <label>当前密码</label>
         <input type="password" name="current_password" required>
         <label>新密码</label>
@@ -1125,6 +1610,73 @@
       </form>
     </section>
   </div>
+  <script>
+    (function () {
+      const form = document.getElementById('passwordForm');
+      const hint = document.getElementById('passwordHint');
+      if (!form || !hint) {
+        return;
+      }
+      function setHint(msg, type) {
+        hint.textContent = msg || '';
+        hint.classList.remove('ok', 'err');
+        if (type === 'ok') {
+          hint.classList.add('ok');
+        }
+        if (type === 'err') {
+          hint.classList.add('err');
+        }
+      }
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const currentInput = form.querySelector('input[name="current_password"]');
+        const newInput = form.querySelector('input[name="new_password"]');
+        const current = (currentInput && currentInput.value) || '';
+        const next = (newInput && newInput.value) || '';
+        if (!current || !next) {
+          setHint('请完整填写密码字段', 'err');
+          return;
+        }
+        const btn = form.querySelector('button[type="submit"]');
+        const oldText = btn ? btn.textContent : '';
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = '保存中...';
+        }
+        try {
+          const resp = await fetch(form.getAttribute('action') || '/account/password', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({
+              current_password: current,
+              new_password: next
+            })
+          });
+          let data = {};
+          try {
+            data = await resp.json();
+          } catch (err) {}
+          if (!resp.ok || !data.ok) {
+            setHint(data.message || '保存失败', 'err');
+            return;
+          }
+          setHint(data.message || '密码修改成功', 'ok');
+          form.reset();
+        } catch (err) {
+          setHint('保存失败，请稍后重试', 'err');
+        } finally {
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = oldText || '保存';
+          }
+        }
+      });
+    })();
+  </script>
 </body>
 </html>
 {{end}}

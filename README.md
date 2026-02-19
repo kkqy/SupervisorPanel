@@ -47,18 +47,12 @@ go run ./cmd/supervisor-panel init-admin --db ./data/supervisor-panel.db --usern
 
 ## 安装（Debian/Ubuntu）
 
-```bash
-curl -fsSL -o /tmp/supervisorpanel-install.sh https://raw.githubusercontent.com/kkqy/SupervisorPanel/main/scripts/install.sh
-chmod +x /tmp/supervisorpanel-install.sh
-sudo env RELEASE_VERSION=v1.1.0 bash /tmp/supervisorpanel-install.sh
-```
-
 安装最新版本（默认 `latest`）：
 
 ```bash
 curl -fsSL -o /tmp/supervisorpanel-install.sh https://raw.githubusercontent.com/kkqy/SupervisorPanel/main/scripts/install.sh
 chmod +x /tmp/supervisorpanel-install.sh
-sudo bash /tmp/supervisorpanel-install.sh
+bash /tmp/supervisorpanel-install.sh
 ```
 
 安装脚本会完成：
@@ -86,6 +80,36 @@ sudo bash /tmp/supervisorpanel-install.sh
   `{DOWNLOAD_BASE_URL}/{RELEASE_VERSION}/supervisor-panel_{RELEASE_VERSION}_linux_{ARCH}.tar.gz`
 
 其中 `ARCH` 自动映射为：`386/amd64/arm/arm64`。
+
+## 升级（Debian/Ubuntu）
+
+升级最新版本（默认 `latest`）：
+
+```bash
+curl -fsSL -o /tmp/supervisorpanel-upgrade.sh https://raw.githubusercontent.com/kkqy/SupervisorPanel/main/scripts/upgrade.sh
+chmod +x /tmp/supervisorpanel-upgrade.sh
+bash /tmp/supervisorpanel-upgrade.sh
+```
+
+升级指定版本：
+
+```bash
+RELEASE_VERSION=v1.0.0 bash /tmp/supervisorpanel-upgrade.sh
+```
+
+升级脚本行为：
+
+1. 按当前系统架构下载对应升级包（`x86/x64/arm/arm64`）
+2. 覆盖安装 `/usr/local/bin/supervisor-panel` 并重启 `supervisor-panel` 服务
+3. 保留现有 `/etc/supervisor-panel/config.env` 配置
+4. 不重新初始化管理员，不修改已有账号密码
+5. 若重启失败自动回滚到旧版本二进制
+
+可用环境变量与安装脚本一致：
+
+- `RELEASE_VERSION`：版本号（默认 `latest`），例如 `v1.0.0`
+- `GITHUB_REPO`：GitHub 仓库路径（默认 `kkqy/SupervisorPanel`）
+- `DOWNLOAD_BASE_URL`：可选，自定义下载源地址
 
 ## 发布打包（单机多架构交叉编译）
 
