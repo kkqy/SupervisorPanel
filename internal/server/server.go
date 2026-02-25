@@ -427,52 +427,63 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request, projectID 
 	receivedCount := 0
 	savedCount := 0
 	failReasonCount := map[string]int{}
-	for _, fhs := range r.MultipartForm.File {
-		for _, fh := range fhs {
-			receivedCount++
-			relPath := normalizeUploadRelPath(fh.Filename)
-			if relPath != "" && currentDir != "" {
-				relPath = filepath.ToSlash(filepath.Join(currentDir, relPath))
-			}
-			if relPath == "" {
-				failReasonCount["非法路径"]++
-				continue
-			}
-			dstPath, err := safeJoin(project.Path, relPath)
-			if err != nil {
-				failReasonCount["路径越界"]++
-				continue
-			}
-			if err := os.MkdirAll(filepath.Dir(dstPath), 0o775); err != nil {
-				failReasonCount["创建目录失败"]++
-				continue
-			}
-			if err := syncOwnership(filepath.Dir(dstPath), project.RunUser, false); err != nil {
-				log.Printf("warn: chown dir failed: %v", err)
-			}
-			src, err := fh.Open()
-			if err != nil {
-				failReasonCount["读取文件失败"]++
-				continue
-			}
-			dst, err := os.Create(dstPath)
-			if err != nil {
-				failReasonCount["写入文件失败"]++
-				_ = src.Close()
-				continue
-			}
-			_, copyErr := io.Copy(dst, src)
-			_ = dst.Close()
-			_ = src.Close()
-			if copyErr != nil {
-				failReasonCount["复制内容失败"]++
-				continue
-			}
-			if err := syncOwnership(dstPath, project.RunUser, false); err != nil {
-				log.Printf("warn: chown file failed: %v", err)
-			}
-			savedCount++
+	files := r.MultipartForm.File["files"]
+	if len(files) == 0 {
+		for _, fhs := range r.MultipartForm.File {
+			files = append(files, fhs...)
 		}
+	}
+	relPaths := r.MultipartForm.Value["rel_paths"]
+	for idx, fh := range files {
+		receivedCount++
+		relPath := ""
+		if idx < len(relPaths) {
+			relPath = normalizeUploadRelPath(relPaths[idx])
+		}
+		if relPath == "" {
+			relPath = normalizeUploadRelPath(fh.Filename)
+		}
+		if relPath != "" && currentDir != "" {
+			relPath = filepath.ToSlash(filepath.Join(currentDir, relPath))
+		}
+		if relPath == "" {
+			failReasonCount["非法路径"]++
+			continue
+		}
+		dstPath, err := safeJoin(project.Path, relPath)
+		if err != nil {
+			failReasonCount["路径越界"]++
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(dstPath), 0o775); err != nil {
+			failReasonCount["创建目录失败"]++
+			continue
+		}
+		if err := syncOwnership(filepath.Dir(dstPath), project.RunUser, false); err != nil {
+			log.Printf("warn: chown dir failed: %v", err)
+		}
+		src, err := fh.Open()
+		if err != nil {
+			failReasonCount["读取文件失败"]++
+			continue
+		}
+		dst, err := os.Create(dstPath)
+		if err != nil {
+			failReasonCount["写入文件失败"]++
+			_ = src.Close()
+			continue
+		}
+		_, copyErr := io.Copy(dst, src)
+		_ = dst.Close()
+		_ = src.Close()
+		if copyErr != nil {
+			failReasonCount["复制内容失败"]++
+			continue
+		}
+		if err := syncOwnership(dstPath, project.RunUser, false); err != nil {
+			log.Printf("warn: chown file failed: %v", err)
+		}
+		savedCount++
 	}
 
 	failSummary := summarizeFailReasons(failReasonCount)

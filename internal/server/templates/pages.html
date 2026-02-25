@@ -832,6 +832,7 @@
       formData.append('current_dir', currentDir || '');
       for (const item of files) {
         formData.append('files', item.file, item.path);
+        formData.append('rel_paths', item.path || item.file.name || '');
       }
       try {
         const expectedCount = files.length;
