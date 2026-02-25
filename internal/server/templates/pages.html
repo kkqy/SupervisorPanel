@@ -878,11 +878,44 @@
       return v.replace(/^\/+/, '').replace(/^\.\//, '');
     }
 
+    function pathDepth(relPath) {
+      if (!relPath) {
+        return 0;
+      }
+      return relPath.split('/').filter(Boolean).length;
+    }
+
+    function pickBetterPath(currentPath, nextPath) {
+      const current = normalizeDroppedPath(currentPath);
+      const next = normalizeDroppedPath(nextPath);
+      if (!next) {
+        return current;
+      }
+      if (!current) {
+        return next;
+      }
+      const currentDepth = pathDepth(current);
+      const nextDepth = pathDepth(next);
+      if (nextDepth > currentDepth) {
+        return next;
+      }
+      if (nextDepth < currentDepth) {
+        return current;
+      }
+      if (next.length > current.length) {
+        return next;
+      }
+      return current;
+    }
+
     function walkEntry(entry, prefix) {
       return new Promise((resolve) => {
         if (entry.isFile) {
           entry.file(function (file) {
-            const rel = normalizeDroppedPath(entry.fullPath) || normalizeDroppedPath((prefix ? prefix + '/' : '') + file.name);
+            const byPrefix = normalizeDroppedPath((prefix ? prefix + '/' : '') + file.name);
+            const byFullPath = normalizeDroppedPath(entry.fullPath);
+            const byWebkitPath = normalizeDroppedPath(file.webkitRelativePath);
+            const rel = pickBetterPath(pickBetterPath(byPrefix, byFullPath), byWebkitPath);
             resolve([{ file: file, path: rel }]);
           }, function () {
             resolve([]);
@@ -943,8 +976,7 @@
         });
       }
 
-      const results = [];
-      const dedup = new Set();
+      const resultsByIdentity = new Map();
       function addFile(file, relPath) {
         if (!file) {
           return;
@@ -953,12 +985,13 @@
         if (!cleanPath) {
           return;
         }
-        const key = cleanPath + '|' + String(file.size) + '|' + String(file.lastModified || 0);
-        if (dedup.has(key)) {
+        const identity = file.name + '|' + String(file.size) + '|' + String(file.lastModified || 0);
+        const existed = resultsByIdentity.get(identity);
+        if (!existed) {
+          resultsByIdentity.set(identity, { file: file, path: cleanPath });
           return;
         }
-        dedup.add(key);
-        results.push({ file: file, path: cleanPath });
+        existed.path = pickBetterPath(existed.path, cleanPath);
       }
 
       const items = dataTransfer.items ? Array.from(dataTransfer.items) : [];
@@ -979,8 +1012,9 @@
           addFile(file, file.name);
         }
       }
-      if (results.length > 0) {
-        return results;
+      const mergedResults = Array.from(resultsByIdentity.values());
+      if (mergedResults.length > 0) {
+        return mergedResults;
       }
       return plainFiles.map(function (file) {
         return {
