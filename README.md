@@ -91,12 +91,6 @@ chmod +x /tmp/supervisorpanel-upgrade.sh
 bash /tmp/supervisorpanel-upgrade.sh
 ```
 
-升级指定版本：
-
-```bash
-RELEASE_VERSION=v1.0.0 bash /tmp/supervisorpanel-upgrade.sh
-```
-
 升级脚本行为：
 
 1. 按当前系统架构下载对应升级包（`x86/x64/arm/arm64`）
