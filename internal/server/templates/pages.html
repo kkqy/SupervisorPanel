@@ -824,11 +824,16 @@
       }
     }
 
+    function normalizeDroppedPath(raw) {
+      const v = String(raw || '').trim().replace(/\\/g, '/');
+      return v.replace(/^\/+/, '').replace(/^\.\//, '');
+    }
+
     function walkEntry(entry, prefix) {
       return new Promise((resolve) => {
         if (entry.isFile) {
           entry.file(function (file) {
-            const rel = (prefix ? prefix + '/' : '') + file.name;
+            const rel = normalizeDroppedPath(entry.fullPath) || normalizeDroppedPath((prefix ? prefix + '/' : '') + file.name);
             resolve([{ file: file, path: rel }]);
           }, function () {
             resolve([]);
@@ -881,11 +886,10 @@
       const directoryMode = hasDirectoryItems(dataTransfer);
 
       if (!directoryMode) {
-        return plainFiles.map(function (file, index) {
+        return plainFiles.map(function (file) {
           return {
             file: file,
-            path: file.webkitRelativePath || file.name,
-            index: index
+            path: normalizeDroppedPath(file.webkitRelativePath || file.name)
           };
         });
       }
@@ -896,7 +900,7 @@
         if (!file) {
           return;
         }
-        const cleanPath = (relPath || file.webkitRelativePath || file.name || '').trim();
+        const cleanPath = normalizeDroppedPath(relPath || file.webkitRelativePath || file.name || '');
         if (!cleanPath) {
           return;
         }
@@ -914,7 +918,7 @@
           continue;
         }
         const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
-        if (entry && entry.isDirectory) {
+        if (entry) {
           const files = await walkEntry(entry, '');
           files.forEach(function (f) {
             addFile(f.file, f.path);
@@ -926,7 +930,15 @@
           addFile(file, file.name);
         }
       }
-      return results;
+      if (results.length > 0) {
+        return results;
+      }
+      return plainFiles.map(function (file) {
+        return {
+          file: file,
+          path: normalizeDroppedPath(file.webkitRelativePath || file.name)
+        };
+      });
     }
 
     ['dragenter', 'dragover'].forEach(function (eventName) {
