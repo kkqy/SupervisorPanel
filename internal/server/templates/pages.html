@@ -722,6 +722,23 @@
         <button class="danger" type="submit">删除项目</button>
       </form>
     </section>
+
+    <div id="renameModal" class="modal hidden" aria-hidden="true">
+      <div class="modal-backdrop" data-close-rename-modal="1"></div>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="renameModalTitle">
+        <h3 id="renameModalTitle">重命名</h3>
+        <p class="hint">路径：<code id="renameRelPathText"></code></p>
+        <form id="renameModalForm" method="post" action="">
+          <input id="renameRelPathInput" name="rel_path" type="hidden">
+          <label for="renameNameInput">新名称</label>
+          <input id="renameNameInput" name="new_name" placeholder="请输入新名称" required>
+          <div class="actions">
+            <button class="ghost" type="button" id="renameCancelBtn">取消</button>
+            <button type="submit">确认重命名</button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
   <script>
   (function () {
@@ -734,12 +751,44 @@
     const explorerHint = document.getElementById('explorerHint');
     const uploadURL = '/projects/{{.Project.ID}}/upload';
     const currentDir = {{.CurrentDir}};
+    const renameModal = document.getElementById('renameModal');
+    const renameModalForm = document.getElementById('renameModalForm');
+    const renameRelPathText = document.getElementById('renameRelPathText');
+    const renameRelPathInput = document.getElementById('renameRelPathInput');
+    const renameNameInput = document.getElementById('renameNameInput');
+    const renameCancelBtn = document.getElementById('renameCancelBtn');
     if (!dropzone || !pickUploadBtn || !pickFilesInput || !projectConfigForm || !uploadHint) {
       return;
     }
 
     let uploading = false;
     let currentEntryPath = {{.CurrentEntry}};
+
+    function openRenameModal(actionURL, relPath, currentName) {
+      if (!renameModal || !renameModalForm || !renameNameInput || !renameRelPathInput) {
+        return;
+      }
+      renameModalForm.action = actionURL;
+      renameRelPathInput.value = relPath || '';
+      if (renameRelPathText) {
+        renameRelPathText.textContent = relPath || '';
+      }
+      renameNameInput.value = currentName || '';
+      renameModal.classList.remove('hidden');
+      renameModal.setAttribute('aria-hidden', 'false');
+      setTimeout(function () {
+        renameNameInput.focus();
+        renameNameInput.select();
+      }, 10);
+    }
+
+    function closeRenameModal() {
+      if (!renameModal) {
+        return;
+      }
+      renameModal.classList.add('hidden');
+      renameModal.setAttribute('aria-hidden', 'true');
+    }
 
     async function parseJSON(resp) {
       try {
@@ -1218,14 +1267,16 @@
         const data = await parseJSON(resp);
         if (!resp.ok || !data.ok) {
           setExplorerHint(data.message || '操作失败', 'err');
-          return;
+          return false;
         }
         setExplorerHint(data.message || '操作成功', 'ok');
         setTimeout(function () {
           window.location.reload();
         }, 300);
+        return true;
       } catch (err) {
         setExplorerHint('操作失败，请稍后重试', 'err');
+        return false;
       } finally {
         if (btn) {
           btn.disabled = false;
@@ -1295,30 +1346,63 @@
     document.querySelectorAll('.rename-form').forEach(function (form) {
       form.addEventListener('submit', async function (e) {
         e.preventDefault();
+        const actionURL = form.getAttribute('action') || '';
         const currentName = (form.getAttribute('data-current-name') || '').trim();
         const relPath = (form.getAttribute('data-rel-path') || '').trim();
+        if (!actionURL) {
+          setExplorerHint('重命名入口异常，请刷新后重试', 'err');
+          return;
+        }
         if (!relPath) {
           setExplorerHint('路径缺失，请刷新后重试', 'err');
           return;
         }
-        const input = window.prompt('请输入新名称', currentName);
-        if (input === null) {
-          return;
+        openRenameModal(actionURL, relPath, currentName);
+      });
+    });
+
+    if (renameCancelBtn) {
+      renameCancelBtn.addEventListener('click', function () {
+        closeRenameModal();
+      });
+    }
+
+    if (renameModal) {
+      renameModal.addEventListener('click', function (e) {
+        const target = e.target;
+        if (target && target.getAttribute && target.getAttribute('data-close-rename-modal') === '1') {
+          closeRenameModal();
         }
-        const newName = input.trim();
+      });
+    }
+
+    if (renameModalForm) {
+      renameModalForm.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const relPath = (renameRelPathInput && renameRelPathInput.value || '').trim();
+        const newName = (renameNameInput && renameNameInput.value || '').trim();
         if (!newName) {
           setExplorerHint('新名称不能为空', 'err');
           return;
         }
-        if (currentName && newName === currentName) {
-          setExplorerHint('名称未变化', 'err');
+        if (!relPath) {
+          setExplorerHint('路径缺失，请刷新后重试', 'err');
           return;
         }
-        await submitExplorerForm(form, {
+        const ok = await submitExplorerForm(renameModalForm, {
           rel_path: relPath,
           new_name: newName
         }, '重命名中...');
+        if (ok) {
+          closeRenameModal();
+        }
       });
+    }
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && renameModal && !renameModal.classList.contains('hidden')) {
+        closeRenameModal();
+      }
     });
 
     const deleteProjectForm = document.getElementById('deleteProjectForm');
