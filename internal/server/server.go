@@ -332,6 +332,8 @@ func (s *Server) handleProjectRoute(w http.ResponseWriter, r *http.Request) {
 		s.handleCreateDir(w, r, projectID)
 	case "create-file":
 		s.handleCreateFile(w, r, projectID)
+	case "rename":
+		s.handleRenameEntry(w, r, projectID)
 	case "delete-file":
 		s.handleDeleteFile(w, r, projectID)
 	case "delete-dir":
@@ -416,6 +418,12 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request, projectID 
 		s.respondUploadResult(w, r, projectID, 0, 0, "未检测到上传文件", true, "")
 		return
 	}
+	rawCurrentDir := strings.TrimSpace(r.FormValue("current_dir"))
+	currentDir := normalizeUploadRelPath(rawCurrentDir)
+	if rawCurrentDir != "" && currentDir == "" {
+		s.respondUploadResult(w, r, projectID, 0, 0, "当前目录路径不合法", true, "")
+		return
+	}
 	receivedCount := 0
 	savedCount := 0
 	failReasonCount := map[string]int{}
@@ -423,6 +431,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request, projectID 
 		for _, fh := range fhs {
 			receivedCount++
 			relPath := normalizeUploadRelPath(fh.Filename)
+			if relPath != "" && currentDir != "" {
+				relPath = filepath.ToSlash(filepath.Join(currentDir, relPath))
+			}
 			if relPath == "" {
 				failReasonCount["非法路径"]++
 				continue
@@ -995,6 +1006,114 @@ func (s *Server) handleCreateFile(w http.ResponseWriter, r *http.Request, projec
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "文件已创建"})
 }
 
+func (s *Server) handleRenameEntry(w http.ResponseWriter, r *http.Request, projectID int64) {
+	if r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+	if !requireAJAX(w, r) {
+		return
+	}
+	project, err := s.store.GetProjectByID(projectID)
+	if err != nil || project == nil {
+		http.NotFound(w, r)
+		return
+	}
+	var req struct {
+		RelPath string `json:"rel_path"`
+		NewName string `json:"new_name"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请求参数错误"})
+		return
+	}
+	relPath := normalizeUploadRelPath(req.RelPath)
+	if relPath == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "路径不合法"})
+		return
+	}
+	newName := strings.TrimSpace(req.NewName)
+	if !isSimplePathName(newName) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "新名称不合法"})
+		return
+	}
+	sourcePath, err := safeJoin(project.Path, relPath)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "路径不合法"})
+		return
+	}
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "目标不存在或无权限访问"})
+		return
+	}
+	parentRel := filepath.ToSlash(filepath.Dir(relPath))
+	if parentRel == "." {
+		parentRel = ""
+	}
+	targetRel := newName
+	if parentRel != "" {
+		targetRel = filepath.ToSlash(filepath.Join(parentRel, newName))
+	}
+	if targetRel == relPath {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":            true,
+			"message":       "名称未变化",
+			"new_path":      targetRel,
+			"current_entry": strings.TrimSpace(project.EntryFile.String),
+		})
+		return
+	}
+	targetPath, err := safeJoin(project.Path, targetRel)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "目标路径不合法"})
+		return
+	}
+	if _, err := os.Stat(targetPath); err == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "目标名称已存在"})
+		return
+	} else if !errors.Is(err, os.ErrNotExist) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "无法检查目标路径"})
+		return
+	}
+	if err := os.Rename(sourcePath, targetPath); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "重命名失败：" + err.Error()})
+		return
+	}
+	_ = syncOwnership(targetPath, project.RunUser, info.IsDir())
+
+	currentEntry := ""
+	if project.EntryFile.Valid {
+		currentEntry = strings.TrimSpace(project.EntryFile.String)
+	}
+	nextEntry, entryChanged := renamedEntryPath(currentEntry, relPath, targetRel, info.IsDir())
+	message := "重命名成功"
+	if entryChanged {
+		args := ""
+		if project.Args.Valid {
+			args = project.Args.String
+		}
+		if err := s.store.UpdateProjectConfig(project.ID, nextEntry, args, project.RunUser); err != nil {
+			message += "，但主程序配置更新失败，请手动重新设置主程序"
+		} else {
+			updatedProject, getErr := s.store.GetProjectByID(project.ID)
+			if getErr != nil || updatedProject == nil {
+				message += "，但主程序配置刷新失败，请稍后检查"
+			} else if err := s.sup.ApplyProject(*updatedProject); err != nil {
+				message += "，但应用Supervisor失败：" + err.Error()
+			}
+		}
+		currentEntry = nextEntry
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":            true,
+		"message":       message,
+		"new_path":      targetRel,
+		"current_entry": currentEntry,
+	})
+}
+
 func (s *Server) handleDeleteDir(w http.ResponseWriter, r *http.Request, projectID int64) {
 	if r.Method != http.MethodPost {
 		http.NotFound(w, r)
@@ -1491,6 +1610,27 @@ func cleanupEmptyParents(projectBase, startDir string) {
 		}
 		current = filepath.Dir(current)
 	}
+}
+
+func renamedEntryPath(currentEntry, fromRel, toRel string, isDir bool) (string, bool) {
+	currentEntry = strings.TrimSpace(currentEntry)
+	if currentEntry == "" {
+		return "", false
+	}
+	if !isDir {
+		if currentEntry == fromRel {
+			return toRel, true
+		}
+		return currentEntry, false
+	}
+	if currentEntry == fromRel {
+		return toRel, true
+	}
+	prefix := fromRel + "/"
+	if strings.HasPrefix(currentEntry, prefix) {
+		return toRel + currentEntry[len(fromRel):], true
+	}
+	return currentEntry, false
 }
 
 func isEditableTextFile(relPath string) bool {
