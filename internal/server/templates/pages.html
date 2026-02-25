@@ -733,13 +733,13 @@
     const runtimeHint = document.getElementById('runtimeHint');
     const explorerHint = document.getElementById('explorerHint');
     const uploadURL = '/projects/{{.Project.ID}}/upload';
-    const currentDir = {{printf "%q" .CurrentDir}};
+    const currentDir = {{.CurrentDir}};
     if (!dropzone || !pickUploadBtn || !pickFilesInput || !projectConfigForm || !uploadHint) {
       return;
     }
 
     let uploading = false;
-    let currentEntryPath = {{printf "%q" .CurrentEntry}};
+    let currentEntryPath = {{.CurrentEntry}};
 
     async function parseJSON(resp) {
       try {
