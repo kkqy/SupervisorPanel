@@ -892,7 +892,7 @@
 
       const results = [];
       const dedup = new Set();
-      function addFile(file, relPath, source, index) {
+      function addFile(file, relPath) {
         if (!file) {
           return;
         }
@@ -900,7 +900,7 @@
         if (!cleanPath) {
           return;
         }
-        const key = cleanPath + '|' + String(file.size) + '|' + String(file.lastModified || 0) + '|' + source + '|' + String(index || 0);
+        const key = cleanPath + '|' + String(file.size) + '|' + String(file.lastModified || 0);
         if (dedup.has(key)) {
           return;
         }
@@ -909,7 +909,6 @@
       }
 
       const items = dataTransfer.items ? Array.from(dataTransfer.items) : [];
-      let walkIdx = 0;
       for (const item of items) {
         if (item.kind !== 'file') {
           continue;
@@ -918,19 +917,15 @@
         if (entry && entry.isDirectory) {
           const files = await walkEntry(entry, '');
           files.forEach(function (f) {
-            addFile(f.file, f.path, 'entry', walkIdx++);
+            addFile(f.file, f.path);
           });
           continue;
         }
         const file = item.getAsFile();
         if (file) {
-          addFile(file, file.name, 'item', walkIdx++);
+          addFile(file, file.name);
         }
       }
-
-      plainFiles.forEach(function (file, idx) {
-        addFile(file, file.webkitRelativePath || file.name, 'plain', idx);
-      });
       return results;
     }
 
