@@ -77,6 +77,10 @@ resolve_package_url() {
   printf '%s' "https://github.com/${GITHUB_REPO}/releases/download/${version}/${package_name}"
 }
 
+supervisor_installed() {
+  dpkg-query -W -f='${Status}' supervisor 2>/dev/null | grep -q "install ok installed"
+}
+
 if [[ "${RELEASE_VERSION}" == "latest" ]]; then
   RELEASE_VERSION="$(resolve_latest_version)"
 fi
@@ -108,8 +112,14 @@ read -r -p "监听端口 [8080]: " PANEL_PORT
 PANEL_PORT="${PANEL_PORT:-8080}"
 
 echo "[1/7] 安装依赖..."
+DEPS=(ca-certificates curl tar)
+if supervisor_installed; then
+  echo "[1/7] 检测到 supervisor 已安装，跳过 supervisor 安装"
+else
+  DEPS=(supervisor "${DEPS[@]}")
+fi
 apt-get update
-apt-get install -y supervisor ca-certificates curl tar
+apt-get install -y "${DEPS[@]}"
 
 echo "[2/7] 准备目录..."
 mkdir -p "${INSTALL_DIR}" "${INSTALL_DIR}/projects" "${DATA_DIR}" /etc/supervisor-panel
