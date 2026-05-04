@@ -1,0 +1,1 @@
+This file keeps the embedded static directory available before the Vue build runs.

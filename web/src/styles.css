@@ -1,0 +1,107 @@
+html,
+body,
+#app {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #f5f7fa;
+  color: #303133;
+  font-family: var(--el-font-family);
+}
+
+a {
+  color: var(--el-color-primary);
+  text-decoration: none;
+}
+
+.page {
+  display: grid;
+  gap: 16px;
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 650;
+}
+
+.page-subtitle {
+  margin: 6px 0 0;
+  color: var(--el-text-color-secondary);
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.58fr);
+  gap: 16px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mono {
+  font-family: Consolas, Monaco, 'Courier New', monospace;
+}
+
+.muted {
+  color: var(--el-text-color-secondary);
+}
+
+.danger-card {
+  border-color: var(--el-color-danger-light-5);
+}
+
+.logbox {
+  min-height: 55vh;
+  max-height: 70vh;
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  border-radius: 8px;
+  background: #111827;
+  color: #d1d5db;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.editor-textarea .el-textarea__inner {
+  min-height: 62vh !important;
+  font-family: Consolas, Monaco, 'Courier New', monospace;
+  line-height: 1.5;
+}
+
+.file-path {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  font-family: Consolas, Monaco, 'Courier New', monospace;
+  word-break: break-all;
+}
+
+@media (max-width: 980px) {
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .page-title {
+    font-size: 20px;
+  }
+}

@@ -21,13 +21,30 @@ SupervisorPanel 是一个基于 Go + SQLite3 的 Supervisor Web 管理面板。
 
 - Go
 - SQLite3 (`modernc.org/sqlite`)
-- 前端模板（Go `html/template`）
+- Vue 3 + Element Plus + TypeScript（构建产物通过 Go `embed` 内嵌到二进制）
 
 ## 本地开发运行
 
 ```bash
 go mod tidy
 go run ./cmd/supervisor-panel
+```
+
+前端开发：
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+前端构建会输出到 `internal/server/static`，随后 Go 编译会把 Vue 产物打包到程序内部：
+
+```bash
+cd web
+npm run build
+cd ..
+go build ./cmd/supervisor-panel
 ```
 
 默认配置（可通过环境变量覆盖）：
@@ -152,6 +169,7 @@ git push origin v1.0.0
 
 - `cmd/supervisor-panel/main.go`: 程序入口
 - `internal/server`: 路由、页面渲染、业务处理
+- `web`: Vue 3 + Element Plus + TypeScript 前端源码
 - `internal/db`: SQLite 初始化和数据访问
 - `internal/supervisor`: Supervisor 配置与控制
 - `scripts/install.sh`: 安装脚本

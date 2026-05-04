@@ -8,10 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html/template"
 	"io"
 	"io/fs"
 	"log"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -30,14 +30,13 @@ import (
 	"supervisorpanel/internal/supervisor"
 )
 
-//go:embed templates/*.html
-var templateFS embed.FS
+//go:embed static/* static/assets/*
+var staticFS embed.FS
 
 type Server struct {
-	cfg       config.Config
-	store     *db.Store
-	sup       *supervisor.Client
-	templates *template.Template
+	cfg   config.Config
+	store *db.Store
+	sup   *supervisor.Client
 }
 
 type ProjectDirEntry struct {
@@ -53,6 +52,33 @@ type BreadcrumbItem struct {
 	Dir  string
 }
 
+type apiProject struct {
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	Slug       string `json:"slug"`
+	Path       string `json:"path"`
+	EntryFile  string `json:"entry_file"`
+	Args       string `json:"args"`
+	RunUser    string `json:"run_user"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
+	Status     string `json:"status"`
+	StatusText string `json:"status_text"`
+}
+
+type apiDirEntry struct {
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	IsDir     bool   `json:"is_dir"`
+	Editable  bool   `json:"editable"`
+	IsCurrent bool   `json:"is_current"`
+}
+
+type apiBreadcrumbItem struct {
+	Name string `json:"name"`
+	Dir  string `json:"dir"`
+}
+
 type ctxKey string
 
 const adminIDKey ctxKey = "adminID"
@@ -60,19 +86,14 @@ const adminIDKey ctxKey = "adminID"
 const maxEditableFileSize = 1 << 20
 
 func New(cfg config.Config, store *db.Store, sup *supervisor.Client) (*Server, error) {
-	tplContent, err := fs.ReadFile(templateFS, "templates/pages.html")
-	if err != nil {
-		return nil, err
-	}
-	tpls, err := template.New("pages").Parse(string(tplContent))
-	if err != nil {
-		return nil, err
-	}
-	return &Server{cfg: cfg, store: store, sup: sup, templates: tpls}, nil
+	_ = mime.AddExtensionType(".js", "text/javascript; charset=utf-8")
+	return &Server{cfg: cfg, store: store, sup: sup}, nil
 }
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/assets/", s.serveStatic)
+	mux.HandleFunc("/api/", s.requireAuthAPI(s.handleAPIRoute))
 	mux.HandleFunc("/login", s.handleLogin)
 	mux.HandleFunc("/logout", s.handleLogout)
 	mux.HandleFunc("/", s.requireAuth(s.handleIndex))
@@ -118,12 +139,16 @@ func (s *Server) InitAdmin(username, password string) error {
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/projects", http.StatusFound)
+	if r.URL.Path == "/" {
+		http.Redirect(w, r, "/projects", http.StatusFound)
+		return
+	}
+	s.serveSPA(w, r)
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		s.render(w, "login", map[string]any{"Error": r.URL.Query().Get("error")})
+		s.serveSPA(w, r)
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -201,26 +226,7 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 		s.handleCreateProject(w, r)
 		return
 	}
-	projects, err := s.store.ListProjects()
-	if err != nil {
-		s.serverError(w, err)
-		return
-	}
-	statuses := make(map[int64]string, len(projects))
-	statusTexts := make(map[int64]string, len(projects))
-	for _, p := range projects {
-		status := s.sup.Status(p.Slug)
-		statuses[p.ID] = status
-		statusTexts[p.ID] = statusTextCN(status)
-	}
-	s.render(w, "projects", map[string]any{
-		"Projects":    projects,
-		"Statuses":    statuses,
-		"StatusTexts": statusTexts,
-		"ProjectsDir": s.cfg.ProjectsDir,
-		"Error":       r.URL.Query().Get("error"),
-		"Info":        r.URL.Query().Get("info"),
-	})
+	s.serveSPA(w, r)
 }
 
 func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
@@ -295,6 +301,300 @@ func (s *Server) handleProjectStatuses(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleAPIRoute(w http.ResponseWriter, r *http.Request) {
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/"), "/")
+	if path == "me" {
+		s.handleAPIMe(w, r)
+		return
+	}
+	if path == "projects" {
+		s.handleAPIProjects(w, r)
+		return
+	}
+	if path == "projects/statuses" {
+		s.handleAPIProjectStatuses(w, r)
+		return
+	}
+
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 || parts[0] != "projects" {
+		http.NotFound(w, r)
+		return
+	}
+	projectID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if len(parts) == 2 {
+		s.handleAPIProjectDetail(w, r, projectID)
+		return
+	}
+	if len(parts) == 3 && parts[2] == "logs" {
+		s.handleAPIProjectLogs(w, r, projectID)
+		return
+	}
+	if len(parts) == 4 && parts[2] == "files" && parts[3] == "content" {
+		s.handleAPIFileContent(w, r, projectID)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+func (s *Server) handleAPIMe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	adminID, ok := adminIDFromContext(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "message": "未登录或会话已过期"})
+		return
+	}
+	admin, err := s.store.GetAdminByID(adminID)
+	if err != nil || admin == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "message": "未登录或会话已过期"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true,
+		"admin": map[string]any{
+			"id":       admin.ID,
+			"username": admin.Username,
+		},
+	})
+}
+
+func (s *Server) handleAPIProjects(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	projects, err := s.store.ListProjects()
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	items := make([]apiProject, 0, len(projects))
+	for _, project := range projects {
+		status := s.sup.Status(project.Slug)
+		items = append(items, apiProjectPayload(project, status))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":           true,
+		"projects":     items,
+		"projects_dir": s.cfg.ProjectsDir,
+	})
+}
+
+func (s *Server) handleAPIProjectStatuses(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	s.handleProjectStatuses(w, r)
+}
+
+func (s *Server) handleAPIProjectDetail(w http.ResponseWriter, r *http.Request, projectID int64) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	project, err := s.store.GetProjectByID(projectID)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if project == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "message": "项目不存在"})
+		return
+	}
+	rawCurrentDir := strings.TrimSpace(r.URL.Query().Get("dir"))
+	currentDir := normalizeUploadRelPath(rawCurrentDir)
+	if rawCurrentDir != "" && currentDir == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "目录路径不合法"})
+		return
+	}
+	currentEntry := ""
+	if project.EntryFile.Valid {
+		currentEntry = project.EntryFile.String
+	}
+	files, err := listProjectFiles(project.Path)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	entries, parentDir, breadcrumbs, err := listProjectDirEntries(project.Path, currentDir, currentEntry)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": err.Error()})
+		return
+	}
+	status := s.sup.Status(project.Slug)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":            true,
+		"project":       apiProjectPayload(*project, status),
+		"files":         files,
+		"entries":       apiEntriesPayload(entries),
+		"current_dir":   currentDir,
+		"parent_dir":    parentDir,
+		"breadcrumbs":   apiBreadcrumbsPayload(breadcrumbs),
+		"current_entry": currentEntry,
+		"current_args":  nullProjectArgs(*project),
+		"status":        status,
+		"status_text":   statusTextCN(status),
+	})
+}
+
+func (s *Server) handleAPIProjectLogs(w http.ResponseWriter, r *http.Request, projectID int64) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	project, err := s.store.GetProjectByID(projectID)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if project == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "message": "项目不存在"})
+		return
+	}
+	lines := 200
+	if lineVal := strings.TrimSpace(r.URL.Query().Get("lines")); lineVal != "" {
+		if parsed, parseErr := strconv.Atoi(lineVal); parseErr == nil && parsed > 0 {
+			lines = parsed
+		}
+	}
+	logs, err := s.sup.ReadLog(project.Slug, lines)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": err.Error()})
+		return
+	}
+	startOffset := int64(0)
+	logPath := s.sup.LogFilePath(project.Slug)
+	if st, statErr := os.Stat(logPath); statErr == nil {
+		startOffset = st.Size()
+	}
+	status := s.sup.Status(project.Slug)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":           true,
+		"project":      apiProjectPayload(*project, status),
+		"logs":         logs,
+		"lines":        lines,
+		"start_offset": startOffset,
+		"log_path":     logPath,
+	})
+}
+
+func (s *Server) handleAPIFileContent(w http.ResponseWriter, r *http.Request, projectID int64) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	project, err := s.store.GetProjectByID(projectID)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if project == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "message": "项目不存在"})
+		return
+	}
+	relPath := normalizeUploadRelPath(r.URL.Query().Get("path"))
+	if relPath == "" || !isEditableTextFile(relPath) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "该文件类型不支持在线编辑"})
+		return
+	}
+	filePath, err := safeJoin(project.Path, relPath)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "文件路径不合法"})
+		return
+	}
+	info, err := os.Stat(filePath)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "文件不存在"})
+		return
+	}
+	if info.IsDir() {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "仅支持编辑文本文件"})
+		return
+	}
+	if info.Size() > maxEditableFileSize {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "文件超过1MB，禁止在线编辑"})
+		return
+	}
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "读取文件失败"})
+		return
+	}
+	if !isTextContent(content) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "该文件不是可编辑文本"})
+		return
+	}
+	status := s.sup.Status(project.Slug)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":         true,
+		"project":    apiProjectPayload(*project, status),
+		"path":       relPath,
+		"content":    string(content),
+		"mtime_nano": strconv.FormatInt(info.ModTime().UnixNano(), 10),
+		"max_size":   maxEditableFileSize,
+	})
+}
+
+func apiProjectPayload(project db.Project, status string) apiProject {
+	return apiProject{
+		ID:         project.ID,
+		Name:       project.Name,
+		Slug:       project.Slug,
+		Path:       project.Path,
+		EntryFile:  nullProjectEntry(project),
+		Args:       nullProjectArgs(project),
+		RunUser:    project.RunUser,
+		CreatedAt:  project.CreatedAt,
+		UpdatedAt:  project.UpdatedAt,
+		Status:     status,
+		StatusText: statusTextCN(status),
+	}
+}
+
+func nullProjectEntry(project db.Project) string {
+	if project.EntryFile.Valid {
+		return project.EntryFile.String
+	}
+	return ""
+}
+
+func nullProjectArgs(project db.Project) string {
+	if project.Args.Valid {
+		return project.Args.String
+	}
+	return ""
+}
+
+func apiEntriesPayload(entries []ProjectDirEntry) []apiDirEntry {
+	items := make([]apiDirEntry, 0, len(entries))
+	for _, entry := range entries {
+		items = append(items, apiDirEntry{
+			Name:      entry.Name,
+			Path:      entry.Path,
+			IsDir:     entry.IsDir,
+			Editable:  entry.Editable,
+			IsCurrent: entry.IsCurrent,
+		})
+	}
+	return items
+}
+
+func apiBreadcrumbsPayload(breadcrumbs []BreadcrumbItem) []apiBreadcrumbItem {
+	items := make([]apiBreadcrumbItem, 0, len(breadcrumbs))
+	for _, item := range breadcrumbs {
+		items = append(items, apiBreadcrumbItem{Name: item.Name, Dir: item.Dir})
+	}
+	return items
+}
+
 func (s *Server) handleProjectRoute(w http.ResponseWriter, r *http.Request) {
 	trimmed := strings.TrimPrefix(r.URL.Path, "/projects/")
 	parts := strings.Split(strings.Trim(trimmed, "/"), "/")
@@ -305,6 +605,18 @@ func (s *Server) handleProjectRoute(w http.ResponseWriter, r *http.Request) {
 	projectID, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
 		http.NotFound(w, r)
+		return
+	}
+	if r.Method == http.MethodGet {
+		if len(parts) >= 2 && parts[1] == "download" {
+			s.handleDownloadFile(w, r, projectID)
+			return
+		}
+		if len(parts) >= 3 && parts[1] == "logs" && parts[2] == "stream" {
+			s.handleProjectLogStream(w, r, projectID)
+			return
+		}
+		s.serveSPA(w, r)
 		return
 	}
 	if len(parts) == 1 {
@@ -352,49 +664,12 @@ func (s *Server) handleProjectRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request, projectID int64) {
-	project, err := s.store.GetProjectByID(projectID)
-	if err != nil {
-		s.serverError(w, err)
+	_ = projectID
+	if r.Method == http.MethodGet {
+		s.serveSPA(w, r)
 		return
 	}
-	if project == nil {
-		http.NotFound(w, r)
-		return
-	}
-	files, err := listProjectFiles(project.Path)
-	if err != nil {
-		s.serverError(w, err)
-		return
-	}
-	currentDir := normalizeUploadRelPath(r.URL.Query().Get("dir"))
-	currentEntry := ""
-	if project.EntryFile.Valid {
-		currentEntry = project.EntryFile.String
-	}
-	currentArgs := ""
-	if project.Args.Valid {
-		currentArgs = project.Args.String
-	}
-	entries, parentDir, breadcrumbs, err := listProjectDirEntries(project.Path, currentDir, currentEntry)
-	if err != nil {
-		http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=%s", projectID, urlEscape(err.Error())), http.StatusFound)
-		return
-	}
-	status := s.sup.Status(project.Slug)
-	s.render(w, "project", map[string]any{
-		"Project":      project,
-		"Files":        files,
-		"Entries":      entries,
-		"CurrentDir":   currentDir,
-		"ParentDir":    parentDir,
-		"Breadcrumbs":  breadcrumbs,
-		"CurrentEntry": currentEntry,
-		"CurrentArgs":  currentArgs,
-		"Status":       status,
-		"StatusText":   statusTextCN(status),
-		"Error":        r.URL.Query().Get("error"),
-		"Info":         r.URL.Query().Get("info"),
-	})
+	http.NotFound(w, r)
 }
 
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request, projectID int64) {
@@ -629,34 +904,8 @@ func (s *Server) handleProjectLogs(w http.ResponseWriter, r *http.Request, proje
 		http.NotFound(w, r)
 		return
 	}
-	project, err := s.store.GetProjectByID(projectID)
-	if err != nil || project == nil {
-		http.NotFound(w, r)
-		return
-	}
-	lines := 200
-	if lineVal := strings.TrimSpace(r.URL.Query().Get("lines")); lineVal != "" {
-		if parsed, parseErr := strconv.Atoi(lineVal); parseErr == nil {
-			lines = parsed
-		}
-	}
-	logs, err := s.sup.ReadLog(project.Slug, lines)
-	if err != nil {
-		http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=%s", projectID, urlEscape(err.Error())), http.StatusFound)
-		return
-	}
-	startOffset := int64(0)
-	if st, statErr := os.Stat(s.sup.LogFilePath(project.Slug)); statErr == nil {
-		startOffset = st.Size()
-	}
-	s.render(w, "logs", map[string]any{
-		"Project":     project,
-		"Logs":        logs,
-		"Lines":       lines,
-		"StartOffset": startOffset,
-		"Error":       r.URL.Query().Get("error"),
-		"Info":        r.URL.Query().Get("info"),
-	})
+	_ = projectID
+	s.serveSPA(w, r)
 }
 
 func (s *Server) handleProjectLogStream(w http.ResponseWriter, r *http.Request, projectID int64) {
@@ -1232,46 +1481,7 @@ func (s *Server) handleEditFile(w http.ResponseWriter, r *http.Request, projectI
 
 	switch r.Method {
 	case http.MethodGet:
-		relPath := normalizeUploadRelPath(r.URL.Query().Get("path"))
-		if relPath == "" || !isEditableTextFile(relPath) {
-			http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=该文件类型不支持在线编辑", projectID), http.StatusFound)
-			return
-		}
-		filePath, err := safeJoin(project.Path, relPath)
-		if err != nil {
-			http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=文件路径不合法", projectID), http.StatusFound)
-			return
-		}
-		info, err := os.Stat(filePath)
-		if err != nil {
-			http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=文件不存在", projectID), http.StatusFound)
-			return
-		}
-		if info.IsDir() {
-			http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=仅支持编辑文本文件", projectID), http.StatusFound)
-			return
-		}
-		if info.Size() > maxEditableFileSize {
-			http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=文件超过1MB，禁止在线编辑", projectID), http.StatusFound)
-			return
-		}
-		content, err := os.ReadFile(filePath)
-		if err != nil {
-			http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=读取文件失败", projectID), http.StatusFound)
-			return
-		}
-		if !isTextContent(content) {
-			http.Redirect(w, r, fmt.Sprintf("/projects/%d?error=该文件不是可编辑文本", projectID), http.StatusFound)
-			return
-		}
-		s.render(w, "edit-file", map[string]any{
-			"Project":   project,
-			"RelPath":   relPath,
-			"Content":   string(content),
-			"MtimeNano": info.ModTime().UnixNano(),
-			"Error":     r.URL.Query().Get("error"),
-			"Info":      r.URL.Query().Get("info"),
-		})
+		s.serveSPA(w, r)
 		return
 
 	case http.MethodPost:
@@ -1347,10 +1557,7 @@ func (s *Server) handleEditFile(w http.ResponseWriter, r *http.Request, projectI
 
 func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		s.render(w, "password", map[string]any{
-			"Error": r.URL.Query().Get("error"),
-			"Info":  r.URL.Query().Get("info"),
-		})
+		s.serveSPA(w, r)
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -1410,16 +1617,28 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		cookie, err := r.Cookie(s.cfg.SessionCookieName)
 		if err != nil || strings.TrimSpace(cookie.Value) == "" {
+			if isAJAXRequest(r) {
+				writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "message": "未登录或会话已过期"})
+				return
+			}
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
 		sess, err := s.store.GetSession(cookie.Value)
 		if err != nil || sess == nil {
+			if isAJAXRequest(r) {
+				writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "message": "未登录或会话已过期"})
+				return
+			}
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
 		if time.Now().After(sess.ExpiresAt) {
 			_ = s.store.DeleteSession(sess.Token)
+			if isAJAXRequest(r) {
+				writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "message": "未登录或会话已过期"})
+				return
+			}
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
@@ -1428,14 +1647,50 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (s *Server) render(w http.ResponseWriter, name string, data map[string]any) {
+func (s *Server) requireAuthAPI(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(s.cfg.SessionCookieName)
+		if err != nil || strings.TrimSpace(cookie.Value) == "" {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "message": "未登录或会话已过期"})
+			return
+		}
+		sess, err := s.store.GetSession(cookie.Value)
+		if err != nil || sess == nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "message": "未登录或会话已过期"})
+			return
+		}
+		if time.Now().After(sess.ExpiresAt) {
+			_ = s.store.DeleteSession(sess.Token)
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "message": "未登录或会话已过期"})
+			return
+		}
+		ctx := context.WithValue(r.Context(), adminIDKey, sess.AdminID)
+		next(w, r.WithContext(ctx))
+	}
+}
+
+func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
+	sub, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		http.Error(w, "static assets unavailable", http.StatusInternalServerError)
+		return
+	}
+	http.FileServer(http.FS(sub)).ServeHTTP(w, r)
+}
+
+func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.NotFound(w, r)
+		return
+	}
+	content, err := fs.ReadFile(staticFS, "static/index.html")
+	if err != nil {
+		http.Error(w, "frontend not built", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if data == nil {
-		data = map[string]any{}
-	}
-	if err := s.templates.ExecuteTemplate(w, name, data); err != nil {
-		http.Error(w, "template error", http.StatusInternalServerError)
-	}
+	w.Header().Set("Cache-Control", "no-cache")
+	_, _ = w.Write(content)
 }
 
 func (s *Server) serverError(w http.ResponseWriter, err error) {

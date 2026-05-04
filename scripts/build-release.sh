@@ -60,6 +60,22 @@ echo "目标平台: ${TARGETS}"
 
 cd "${ROOT_DIR}"
 
+if ! command -v npm >/dev/null 2>&1; then
+  echo "未找到 npm，无法构建 Vue 前端" >&2
+  exit 1
+fi
+
+echo "构建 Vue 前端..."
+(
+  cd "${ROOT_DIR}/web"
+  if [[ -f package-lock.json ]]; then
+    npm ci
+  else
+    npm install
+  fi
+  npm run build
+)
+
 for raw_target in "${target_items[@]}"; do
   target="${raw_target// /}"
   if [[ -z "${target}" ]]; then
