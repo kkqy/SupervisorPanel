@@ -1281,7 +1281,7 @@ func (s *Server) handleEditFile(w http.ResponseWriter, r *http.Request, projectI
 		var req struct {
 			Path      string `json:"path"`
 			Content   string `json:"content"`
-			MtimeNano int64  `json:"mtime_nano"`
+			MtimeNano string `json:"mtime_nano"`
 		}
 		if err := decodeJSONBody(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请求参数错误"})
@@ -1307,8 +1307,14 @@ func (s *Server) handleEditFile(w http.ResponseWriter, r *http.Request, projectI
 			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "文件不存在"})
 			return
 		}
-		if req.MtimeNano > 0 {
-			if req.MtimeNano != info.ModTime().UnixNano() {
+		mtimeNano := strings.TrimSpace(req.MtimeNano)
+		if mtimeNano != "" && mtimeNano != "0" {
+			expectedMtime, err := strconv.ParseInt(mtimeNano, 10, 64)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请求参数错误"})
+				return
+			}
+			if expectedMtime != info.ModTime().UnixNano() {
 				writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "message": "文件已被其他操作修改，请刷新后重试"})
 				return
 			}
@@ -1330,7 +1336,7 @@ func (s *Server) handleEditFile(w http.ResponseWriter, r *http.Request, projectI
 		if statErr == nil {
 			nextMtime = st.ModTime().UnixNano()
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "保存成功", "mtime_nano": nextMtime})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "保存成功", "mtime_nano": strconv.FormatInt(nextMtime, 10)})
 		return
 
 	default:

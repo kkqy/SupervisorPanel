@@ -1551,7 +1551,7 @@
         const textarea = form.querySelector('textarea[name="content"]');
         const content = textarea ? textarea.value : '';
         const path = form.getAttribute('data-path') || '';
-        const mtimeNano = Number(form.getAttribute('data-mtime-nano') || '0');
+        const mtimeNano = form.getAttribute('data-mtime-nano') || '0';
         if (!path) {
           setHint('文件路径缺失，请刷新后重试', 'err');
           return;
@@ -1584,7 +1584,7 @@
             setHint(data.message || '保存失败', 'err');
             return;
           }
-          if (typeof data.mtime_nano === 'number' && data.mtime_nano > 0) {
+          if (typeof data.mtime_nano === 'string' && data.mtime_nano !== '' && data.mtime_nano !== '0') {
             form.setAttribute('data-mtime-nano', String(data.mtime_nano));
           }
           setHint(data.message || '保存成功', 'ok');
