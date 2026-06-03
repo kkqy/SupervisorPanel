@@ -11,7 +11,7 @@
         <el-menu-item index="/account/password">修改密码</el-menu-item>
       </el-menu>
 
-      <el-button type="warning" plain :loading="restartingSupervisor" @click="confirmRestartSupervisor">重启 Supervisor</el-button>
+      <el-button type="warning" plain :loading="restartingSupervisor" @click="confirmRestartSupervisor">重启</el-button>
       <el-button plain @click="logout">退出</el-button>
     </el-header>
 
