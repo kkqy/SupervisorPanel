@@ -12,6 +12,7 @@ type Config struct {
 	ProjectsDir       string
 	SupervisorConfDir string
 	SupervisorctlBin  string
+	SystemctlBin      string
 	SessionTTLHours   int
 	SessionCookieName string
 	SessionSecure     bool
@@ -25,6 +26,7 @@ func Load() Config {
 		ProjectsDir:       getEnv("SP_PROJECTS_DIR", "./projects"),
 		SupervisorConfDir: getEnv("SP_SUPERVISOR_CONF_DIR", "/etc/supervisor/conf.d"),
 		SupervisorctlBin:  getEnv("SP_SUPERVISORCTL_BIN", "/usr/bin/supervisorctl"),
+		SystemctlBin:      getEnv("SP_SYSTEMCTL_BIN", "/usr/bin/systemctl"),
 		SessionTTLHours:   getEnvInt("SP_SESSION_TTL_HOURS", 24),
 		SessionCookieName: getEnv("SP_SESSION_COOKIE_NAME", "sp_session"),
 		SessionSecure:     getEnvBool("SP_SESSION_SECURE", false),

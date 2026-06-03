@@ -54,6 +54,7 @@ go build ./cmd/supervisor-panel
 - `SP_PROJECTS_DIR=./projects`
 - `SP_SUPERVISOR_CONF_DIR=/etc/supervisor/conf.d`
 - `SP_SUPERVISORCTL_BIN=/usr/bin/supervisorctl`
+- `SP_SYSTEMCTL_BIN=/usr/bin/systemctl`
 - `SP_RUNTIME_USER=www-data`
 
 首次创建管理员：

@@ -11,6 +11,7 @@
         <el-menu-item index="/account/password">修改密码</el-menu-item>
       </el-menu>
 
+      <el-button type="warning" plain :loading="restartingSupervisor" @click="confirmRestartSupervisor">重启 Supervisor</el-button>
       <el-button plain @click="logout">退出</el-button>
     </el-header>
 
@@ -21,13 +22,44 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
+
+import { errorMessage } from '@/api/http'
+import { restartSupervisor } from '@/api/system'
 
 const route = useRoute()
 const router = useRouter()
+const restartingSupervisor = ref(false)
 
 const activePath = computed(() => (route.path.startsWith('/account/password') ? '/account/password' : '/projects'))
+
+async function confirmRestartSupervisor() {
+  try {
+    await ElMessageBox.confirm(
+      '该操作将重启 Supervisor 服务，可能短暂影响所有由 Supervisor 管理的项目。确认继续？',
+      '重启 Supervisor',
+      {
+        confirmButtonText: '确认重启',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
+
+  restartingSupervisor.value = true
+  try {
+    const result = await restartSupervisor()
+    ElMessage.success(result.message || 'Supervisor 已重启')
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '重启 Supervisor 失败'))
+  } finally {
+    restartingSupervisor.value = false
+  }
+}
 
 function logout() {
   window.location.href = '/logout'

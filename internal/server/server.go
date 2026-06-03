@@ -28,6 +28,7 @@ import (
 	"supervisorpanel/internal/config"
 	"supervisorpanel/internal/db"
 	"supervisorpanel/internal/supervisor"
+	"supervisorpanel/internal/systemctl"
 )
 
 //go:embed static/* static/assets/*
@@ -315,6 +316,10 @@ func (s *Server) handleAPIRoute(w http.ResponseWriter, r *http.Request) {
 		s.handleAPIProjectStatuses(w, r)
 		return
 	}
+	if path == "system/supervisor/restart" {
+		s.handleAPIRestartSupervisor(w, r)
+		return
+	}
 
 	parts := strings.Split(path, "/")
 	if len(parts) < 2 || parts[0] != "projects" {
@@ -393,6 +398,23 @@ func (s *Server) handleAPIProjectStatuses(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.handleProjectStatuses(w, r)
+}
+
+func (s *Server) handleAPIRestartSupervisor(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+	out, err := systemctl.Client{Bin: s.cfg.SystemctlBin}.RestartSupervisor(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": err.Error()})
+		return
+	}
+	message := "Supervisor 已重启"
+	if strings.TrimSpace(out) != "" {
+		message = out
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": message})
 }
 
 func (s *Server) handleAPIProjectDetail(w http.ResponseWriter, r *http.Request, projectID int64) {
