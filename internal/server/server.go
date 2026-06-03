@@ -35,9 +35,10 @@ import (
 var staticFS embed.FS
 
 type Server struct {
-	cfg   config.Config
-	store *db.Store
-	sup   *supervisor.Client
+	cfg       config.Config
+	store     *db.Store
+	sup       *supervisor.Client
+	systemctl systemctl.Client
 }
 
 type ProjectDirEntry struct {
@@ -88,7 +89,7 @@ const maxEditableFileSize = 1 << 20
 
 func New(cfg config.Config, store *db.Store, sup *supervisor.Client) (*Server, error) {
 	_ = mime.AddExtensionType(".js", "text/javascript; charset=utf-8")
-	return &Server{cfg: cfg, store: store, sup: sup}, nil
+	return &Server{cfg: cfg, store: store, sup: sup, systemctl: systemctl.Client{Bin: cfg.SystemctlBin}}, nil
 }
 
 func (s *Server) Routes() http.Handler {
@@ -405,16 +406,22 @@ func (s *Server) handleAPIRestartSupervisor(w http.ResponseWriter, r *http.Reque
 		http.NotFound(w, r)
 		return
 	}
-	out, err := systemctl.Client{Bin: s.cfg.SystemctlBin}.RestartSupervisor(r.Context())
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": err.Error()})
-		return
+	client := s.systemctl
+	if strings.TrimSpace(client.Bin) == "" {
+		client.Bin = s.cfg.SystemctlBin
 	}
-	message := "Supervisor 已重启"
-	if strings.TrimSpace(out) != "" {
-		message = out
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": message})
+	resultCh := client.RestartSupervisorAsync(context.Background(), 500*time.Millisecond)
+	go func() {
+		result := <-resultCh
+		if result.Err != nil {
+			log.Printf("restart supervisor failed: %v", result.Err)
+			return
+		}
+		if strings.TrimSpace(result.Output) != "" {
+			log.Printf("restart supervisor completed: %s", result.Output)
+		}
+	}()
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "已提交重启 Supervisor 命令"})
 }
 
 func (s *Server) handleAPIProjectDetail(w http.ResponseWriter, r *http.Request, projectID int64) {

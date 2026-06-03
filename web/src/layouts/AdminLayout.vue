@@ -38,7 +38,7 @@ const activePath = computed(() => (route.path.startsWith('/account/password') ? 
 async function confirmRestartSupervisor() {
   try {
     await ElMessageBox.confirm(
-      '该操作将重启 Supervisor 服务，可能短暂影响所有由 Supervisor 管理的项目。确认继续？',
+      '该操作将提交重启 Supervisor 服务命令，可能短暂影响所有由 Supervisor 管理的项目。确认继续？',
       '重启 Supervisor',
       {
         confirmButtonText: '确认重启',
@@ -53,7 +53,7 @@ async function confirmRestartSupervisor() {
   restartingSupervisor.value = true
   try {
     const result = await restartSupervisor()
-    ElMessage.success(result.message || 'Supervisor 已重启')
+    ElMessage.success(result.message || '已提交重启 Supervisor 命令')
   } catch (error) {
     ElMessage.error(errorMessage(error, '重启 Supervisor 失败'))
   } finally {

@@ -186,6 +186,7 @@ SP_DB_PATH=${DATA_DIR}/supervisor-panel.db
 SP_PROJECTS_DIR=${INSTALL_DIR}/projects
 SP_SUPERVISOR_CONF_DIR=/etc/supervisor/conf.d
 SP_SUPERVISORCTL_BIN=/usr/bin/supervisorctl
+SP_SYSTEMCTL_BIN=/usr/bin/systemctl
 SP_SESSION_TTL_HOURS=24
 SP_SESSION_COOKIE_NAME=sp_session
 SP_SESSION_SECURE=false
@@ -201,7 +202,7 @@ cat > "${SERVICE_FILE}" <<EOF
 [Unit]
 Description=SupervisorPanel Web Manager
 After=network.target supervisor.service
-Requires=supervisor.service
+Wants=supervisor.service
 
 [Service]
 Type=simple

@@ -90,3 +90,41 @@ func TestRestartSupervisorTimeoutMessage(t *testing.T) {
 		t.Fatalf("error = %q, want timeout message", err.Error())
 	}
 }
+
+func TestRestartSupervisorAsyncDoesNotBlockCaller(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	client := Client{
+		Run: func(ctx context.Context, name string, args ...string) (string, error) {
+			close(started)
+			<-release
+			return "done", nil
+		},
+	}
+
+	resultCh := client.RestartSupervisorAsync(context.Background(), 0)
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("async restart did not start runner")
+	}
+	select {
+	case result := <-resultCh:
+		t.Fatalf("async restart returned before runner completed: %+v", result)
+	default:
+	}
+
+	close(release)
+	select {
+	case result := <-resultCh:
+		if result.Err != nil {
+			t.Fatalf("async restart returned error: %v", result.Err)
+		}
+		if result.Output != "done" {
+			t.Fatalf("output = %q, want done", result.Output)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("async restart did not return after runner completed")
+	}
+}
