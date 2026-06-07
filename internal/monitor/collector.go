@@ -13,6 +13,7 @@ import (
 )
 
 const defaultProcRoot = "/proc"
+const defaultSampleDelay = 200 * time.Millisecond
 
 // SupervisorStatus 提供项目进程状态和 PID。
 type SupervisorStatus interface {
@@ -31,9 +32,8 @@ type Collector struct {
 
 func New(supervisor SupervisorStatus) Collector {
 	return Collector{
-		ProcRoot:    defaultProcRoot,
-		SampleDelay: 100 * time.Millisecond,
-		Supervisor:  supervisor,
+		ProcRoot:   defaultProcRoot,
+		Supervisor: supervisor,
 	}
 }
 
@@ -46,9 +46,7 @@ func (c Collector) SystemSnapshot(diskPath string) (SystemSnapshot, error) {
 	if err != nil {
 		return SystemSnapshot{}, err
 	}
-	if c.SampleDelay > 0 {
-		time.Sleep(c.SampleDelay)
-	}
+	time.Sleep(sampleDelay(c))
 	nextCPU, _, err := readCPU(c)
 	if err != nil {
 		return SystemSnapshot{}, err
@@ -82,7 +80,7 @@ func (c Collector) ProcessSnapshot(slug string) ProcessSnapshot {
 		StatusText: statusTextCN(status),
 		PID:        pid,
 	}
-	if status == "STOPPED" || pid <= 0 {
+	if status != "RUNNING" || pid <= 0 {
 		snapshot.Message = "进程未运行"
 		return snapshot
 	}
@@ -101,9 +99,7 @@ func (c Collector) ProcessSnapshot(slug string) ProcessSnapshot {
 		snapshot.Message = err.Error()
 		return snapshot
 	}
-	if c.SampleDelay > 0 {
-		time.Sleep(c.SampleDelay)
-	}
+	time.Sleep(sampleDelay(c))
 	nextCPU, _, err := readCPU(c)
 	if err != nil {
 		snapshot.Message = err.Error()
@@ -125,17 +121,18 @@ func (c Collector) ProcessSnapshot(slug string) ProcessSnapshot {
 		snapshot.Message = err.Error()
 		return snapshot
 	}
-	ports, connections, err := readProcessNetwork(c, pid)
-	if err != nil {
-		snapshot.Message = err.Error()
-		return snapshot
-	}
-
 	snapshot.CPUPercent = processCPUPercent(prevProc, nextProc, prevCPU, nextCPU, cpuCount)
 	snapshot.MemoryBytes = rss
 	if memory.TotalBytes > 0 {
 		snapshot.MemoryPercent = round1(float64(rss) * 100 / float64(memory.TotalBytes))
 	}
+	ports, connections, err := readProcessNetwork(c, pid)
+	if err != nil {
+		snapshot.Message = err.Error()
+		snapshot.Available = true
+		return snapshot
+	}
+
 	snapshot.ListenPorts = ports
 	snapshot.ConnectionCount = connections
 	snapshot.Available = true
@@ -148,6 +145,13 @@ func (c Collector) ProcessSnapshots(projects []db.Project) map[string]ProcessSna
 		snapshots[strconv.FormatInt(project.ID, 10)] = c.ProcessSnapshot(project.Slug)
 	}
 	return snapshots
+}
+
+func sampleDelay(c Collector) time.Duration {
+	if c.SampleDelay <= 0 {
+		return defaultSampleDelay
+	}
+	return c.SampleDelay
 }
 
 func readCPU(c Collector) (cpuTimes, int, error) {
