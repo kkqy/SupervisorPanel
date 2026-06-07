@@ -215,9 +215,12 @@ func summarizeSockets(rows []procNetRow, processInodes map[string]struct{}) ([]i
 		if _, ok := processInodes[row.inode]; !ok {
 			continue
 		}
-		connectionCount++
 		if row.listen && row.port > 0 {
 			seenPorts[row.port] = struct{}{}
+			continue
+		}
+		if !row.listen {
+			connectionCount++
 		}
 	}
 

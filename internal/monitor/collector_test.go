@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -144,6 +145,33 @@ func TestNewLeavesSampleDelayZeroForDefaultDelay(t *testing.T) {
 	}
 }
 
+func TestProcessSnapshotStoppedListenPortsEncodeAsEmptyArray(t *testing.T) {
+	collector := New(stubSupervisor{status: "STOPPED", pid: 0})
+
+	got := collector.ProcessSnapshot("app")
+
+	if got.ListenPorts == nil {
+		t.Fatal("ListenPorts = nil, want empty slice")
+	}
+	assertListenPortsJSON(t, got, "[]")
+}
+
+func TestProcessSnapshotsNonRunningListenPortsEncodeAsEmptyArray(t *testing.T) {
+	collector := Collector{
+		Supervisor: mapSupervisor{
+			"stopped": {status: "STOPPED", pid: 0},
+		},
+	}
+
+	got := collector.ProcessSnapshots([]db.Project{{ID: 1, Slug: "stopped"}})
+
+	snapshot := got["1"]
+	if snapshot.ListenPorts == nil {
+		t.Fatal("ListenPorts = nil, want empty slice")
+	}
+	assertListenPortsJSON(t, snapshot, "[]")
+}
+
 func TestProcessSnapshotsBatchesRunningProcessSamplingWithOneSleep(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux proc snapshot test is skipped on non-Linux")
@@ -232,11 +260,28 @@ func TestSummarizeSocketsCountsMatchingListenAndEstablishedRows(t *testing.T) {
 
 	ports, connections := summarizeSockets(rows, inodes)
 
-	if connections != 3 {
-		t.Fatalf("connections = %d, want 3", connections)
+	if connections != 1 {
+		t.Fatalf("connections = %d, want 1", connections)
 	}
 	if !reflect.DeepEqual(ports, []int{8080}) {
 		t.Fatalf("ports = %#v, want []int{8080}", ports)
+	}
+}
+
+func assertListenPortsJSON(t *testing.T, snapshot ProcessSnapshot, want string) {
+	t.Helper()
+
+	payload, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatalf("json.Marshal(ProcessSnapshot): %v", err)
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal(ProcessSnapshot): %v", err)
+	}
+	got := string(decoded["listen_ports"])
+	if got != want {
+		t.Fatalf("listen_ports JSON = %s, want %s", got, want)
 	}
 }
 

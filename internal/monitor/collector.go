@@ -83,9 +83,10 @@ func (c Collector) ProcessSnapshot(slug string) ProcessSnapshot {
 	}
 
 	snapshot := ProcessSnapshot{
-		Status:     status,
-		StatusText: statusTextCN(status),
-		PID:        pid,
+		Status:      status,
+		StatusText:  statusTextCN(status),
+		PID:         pid,
+		ListenPorts: []int{},
 	}
 	if status != "RUNNING" || pid <= 0 {
 		snapshot.Message = "进程未运行"
@@ -161,9 +162,10 @@ func (c Collector) ProcessSnapshots(projects []db.Project) map[string]ProcessSna
 		}
 		key := strconv.FormatInt(project.ID, 10)
 		snapshots[key] = ProcessSnapshot{
-			Status:     status,
-			StatusText: statusTextCN(status),
-			PID:        pid,
+			Status:      status,
+			StatusText:  statusTextCN(status),
+			PID:         pid,
+			ListenPorts: []int{},
 		}
 		if status != "RUNNING" || pid <= 0 {
 			snapshot := snapshots[key]
