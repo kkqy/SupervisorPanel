@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -52,4 +54,38 @@ func TestHandleAPIRestartSupervisorReturnsBeforeCommandCompletes(t *testing.T) {
 		t.Fatal("handler did not start supervisor restart command")
 	}
 	close(release)
+}
+
+func TestListProjectDirEntriesIncludesFileMetadata(t *testing.T) {
+	projectRoot := t.TempDir()
+	filePath := filepath.Join(projectRoot, "app.log")
+	content := []byte("hello metadata")
+	if err := os.WriteFile(filePath, content, 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	mtime := time.Date(2026, 6, 8, 9, 30, 0, 123, time.Local)
+	if err := os.Chtimes(filePath, mtime, mtime); err != nil {
+		t.Fatalf("set file time: %v", err)
+	}
+
+	entries, _, _, err := listProjectDirEntries(projectRoot, "", "")
+	if err != nil {
+		t.Fatalf("list entries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("len(entries) = %d, want 1", len(entries))
+	}
+	entry := entries[0]
+	if entry.Size != int64(len(content)) {
+		t.Fatalf("Size = %d, want %d", entry.Size, len(content))
+	}
+	if entry.ModifiedAt.IsZero() {
+		t.Fatal("ModifiedAt is zero")
+	}
+	if entry.ModifiedAt.Sub(mtime).Abs() > time.Millisecond {
+		t.Fatalf("ModifiedAt = %s, want %s", entry.ModifiedAt, mtime)
+	}
+	if entry.Owner == "" {
+		t.Fatal("Owner is empty")
+	}
 }

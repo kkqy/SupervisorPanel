@@ -2,6 +2,10 @@
   <div class="upload-dropzone" :class="{ active: dragging, busy: uploading }" @dragenter.prevent="dragging = true" @dragover.prevent="dragging = true" @dragleave.prevent="dragging = false" @drop.prevent="handleDrop">
     <div class="drop-title">拖拽文件或文件夹到这里上传</div>
     <div class="drop-subtitle">支持多文件；浏览器支持目录拖拽时会保留目录结构。</div>
+    <div v-if="uploading" class="upload-progress">
+      <el-progress :percentage="progressPercent" :stroke-width="10" />
+      <span class="muted">{{ progressText }}</span>
+    </div>
     <div class="drop-actions">
       <el-button type="primary" :loading="uploading" @click="pickFiles">选择文件</el-button>
       <input ref="fileInput" hidden type="file" multiple @change="handlePicked" />
@@ -10,11 +14,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import type { UploadProgress } from '@/api/http'
 
 const props = defineProps<{
   uploading: boolean
+  progress?: UploadProgress | null
 }>()
 
 const emit = defineEmits<{
@@ -23,6 +29,13 @@ const emit = defineEmits<{
 
 const dragging = ref(false)
 const fileInput = ref<HTMLInputElement>()
+const progressPercent = computed(() => props.progress?.percent ?? 0)
+const progressText = computed(() => {
+  const progress = props.progress
+  if (!progress) return '准备上传...'
+  if (progress.total > 0) return `${formatBytes(progress.loaded)} / ${formatBytes(progress.total)}`
+  return `已上传 ${formatBytes(progress.loaded)}`
+})
 
 function pickFiles() {
   if (props.uploading) return
@@ -74,6 +87,19 @@ function pickBetterPath(currentPath: string, nextPath: string) {
   if (nextDepth > currentDepth) return next
   if (nextDepth < currentDepth) return current
   return next.length > current.length ? next : current
+}
+
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let size = value
+  let unitIndex = 0
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex += 1
+  }
+  const precision = unitIndex === 0 || size >= 10 ? 0 : 1
+  return `${size.toFixed(precision)} ${units[unitIndex]}`
 }
 
 function walkEntry(entry: FileSystemEntry, prefix: string): Promise<Array<{ file: File; path: string }>> {
@@ -190,5 +216,11 @@ async function parseDroppedFiles(dataTransfer: DataTransfer) {
 
 .drop-subtitle {
   color: var(--el-text-color-secondary);
+}
+
+.upload-progress {
+  width: min(460px, 100%);
+  display: grid;
+  gap: 4px;
 }
 </style>

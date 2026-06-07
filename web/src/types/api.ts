@@ -28,6 +28,9 @@ export interface DirEntry {
   is_dir: boolean
   editable: boolean
   is_current: boolean
+  size: number
+  owner: string
+  modified_at: string
 }
 
 export interface BreadcrumbItem {

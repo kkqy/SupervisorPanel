@@ -42,11 +42,14 @@ type Server struct {
 }
 
 type ProjectDirEntry struct {
-	Name      string
-	Path      string
-	IsDir     bool
-	Editable  bool
-	IsCurrent bool
+	Name       string
+	Path       string
+	IsDir      bool
+	Editable   bool
+	IsCurrent  bool
+	Size       int64
+	Owner      string
+	ModifiedAt time.Time
 }
 
 type BreadcrumbItem struct {
@@ -69,11 +72,14 @@ type apiProject struct {
 }
 
 type apiDirEntry struct {
-	Name      string `json:"name"`
-	Path      string `json:"path"`
-	IsDir     bool   `json:"is_dir"`
-	Editable  bool   `json:"editable"`
-	IsCurrent bool   `json:"is_current"`
+	Name       string    `json:"name"`
+	Path       string    `json:"path"`
+	IsDir      bool      `json:"is_dir"`
+	Editable   bool      `json:"editable"`
+	IsCurrent  bool      `json:"is_current"`
+	Size       int64     `json:"size"`
+	Owner      string    `json:"owner"`
+	ModifiedAt time.Time `json:"modified_at"`
 }
 
 type apiBreadcrumbItem struct {
@@ -606,11 +612,14 @@ func apiEntriesPayload(entries []ProjectDirEntry) []apiDirEntry {
 	items := make([]apiDirEntry, 0, len(entries))
 	for _, entry := range entries {
 		items = append(items, apiDirEntry{
-			Name:      entry.Name,
-			Path:      entry.Path,
-			IsDir:     entry.IsDir,
-			Editable:  entry.Editable,
-			IsCurrent: entry.IsCurrent,
+			Name:       entry.Name,
+			Path:       entry.Path,
+			IsDir:      entry.IsDir,
+			Editable:   entry.Editable,
+			IsCurrent:  entry.IsCurrent,
+			Size:       entry.Size,
+			Owner:      entry.Owner,
+			ModifiedAt: entry.ModifiedAt,
 		})
 	}
 	return items
@@ -1793,17 +1802,25 @@ func listProjectDirEntries(projectRoot, currentDir, currentEntry string) ([]Proj
 	}
 	items := make([]ProjectDirEntry, 0, len(entries))
 	for _, ent := range entries {
+		info, err := ent.Info()
+		if err != nil {
+			return nil, "", nil, err
+		}
 		name := ent.Name()
 		relPath := name
 		if currentDir != "" {
 			relPath = filepath.ToSlash(filepath.Join(currentDir, name))
 		}
+		fullPath := filepath.Join(dirPath, name)
 		item := ProjectDirEntry{
-			Name:      name,
-			Path:      relPath,
-			IsDir:     ent.IsDir(),
-			Editable:  !ent.IsDir() && isEditableTextFile(relPath),
-			IsCurrent: !ent.IsDir() && relPath == currentEntry,
+			Name:       name,
+			Path:       relPath,
+			IsDir:      ent.IsDir(),
+			Editable:   !ent.IsDir() && isEditableTextFile(relPath),
+			IsCurrent:  !ent.IsDir() && relPath == currentEntry,
+			Size:       info.Size(),
+			Owner:      fileOwner(fullPath, info),
+			ModifiedAt: info.ModTime(),
 		}
 		items = append(items, item)
 	}

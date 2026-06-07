@@ -1,4 +1,4 @@
-import { request } from './http'
+import { request, uploadForm, type UploadProgress } from './http'
 import type {
   ActionResponse,
   FileContentResponse,
@@ -62,17 +62,19 @@ export function saveProjectConfig(projectID: number, entryFile: string, args: st
   })
 }
 
-export function uploadProjectFiles(projectID: number, currentDir: string, files: Array<{ file: File; path: string }>) {
+export function uploadProjectFiles(
+  projectID: number,
+  currentDir: string,
+  files: Array<{ file: File; path: string }>,
+  onProgress?: (progress: UploadProgress) => void,
+) {
   const formData = new FormData()
   formData.append('current_dir', currentDir)
   for (const item of files) {
     formData.append('files', item.file, item.path)
     formData.append('rel_paths', item.path)
   }
-  return request<ActionResponse>(`/projects/${projectID}/upload`, {
-    method: 'POST',
-    body: formData,
-  })
+  return uploadForm<ActionResponse>(`/projects/${projectID}/upload`, formData, onProgress)
 }
 
 export function createDir(projectID: number, currentDir: string, name: string) {

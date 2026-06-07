@@ -7,7 +7,7 @@
       </div>
       <div class="toolbar">
         <StatusTag :status="detail?.status" :text="detail?.status_text" />
-        <el-button @click="loadDetail">刷新</el-button>
+        <el-button :loading="loading" @click="loadDetail">刷新</el-button>
         <el-button @click="router.push('/projects')">返回列表</el-button>
         <el-button type="primary" plain @click="router.push(`/projects/${projectID}/logs`)">查看日志</el-button>
       </div>
@@ -16,7 +16,7 @@
     <div class="card-grid">
       <el-card v-loading="loading" shadow="never">
         <template #header>上传文件</template>
-        <UploadDropzone :uploading="uploading" @upload="uploadFiles" />
+        <UploadDropzone :uploading="uploading" :progress="uploadProgress" @upload="uploadFiles" />
         <p class="muted">上传文件夹请直接拖拽到上方区域；按钮支持普通多文件上传。</p>
       </el-card>
 
@@ -34,9 +34,9 @@
           </el-form-item>
           <div class="toolbar">
             <el-button type="primary" :loading="savingConfig" @click="saveConfig">保存参数和运行用户</el-button>
-            <el-button type="success" @click="runAction('start')">启动</el-button>
-            <el-button @click="runAction('restart')">重启</el-button>
-            <el-button type="warning" plain @click="runAction('stop')">停止</el-button>
+            <el-button type="success" :loading="runningAction === 'start'" :disabled="!!runningAction && runningAction !== 'start'" @click="runAction('start')">启动</el-button>
+            <el-button :loading="runningAction === 'restart'" :disabled="!!runningAction && runningAction !== 'restart'" @click="runAction('restart')">重启</el-button>
+            <el-button type="warning" plain :loading="runningAction === 'stop'" :disabled="!!runningAction && runningAction !== 'stop'" @click="runAction('stop')">停止</el-button>
           </div>
         </el-form>
       </el-card>
@@ -49,6 +49,8 @@
       :parent-dir="detail.parent_dir"
       :breadcrumbs="detail.breadcrumbs"
       :entries="detail.entries"
+      :busy-action="explorerBusy?.action"
+      :busy-path="explorerBusy?.path"
       @enter-dir="enterDir"
       @create-dir="handleCreateDir"
       @create-file="handleCreateFile"
@@ -61,7 +63,7 @@
     <el-card class="danger-card" shadow="never">
       <template #header>危险操作</template>
       <p class="muted">删除项目会清理项目目录、数据库记录和 Supervisor 配置，无法恢复。</p>
-      <el-button type="danger" @click="confirmDeleteProject">删除项目</el-button>
+      <el-button type="danger" :loading="deletingProject" @click="confirmDeleteProject">删除项目</el-button>
     </el-card>
   </section>
 </template>
@@ -87,6 +89,7 @@ import {
   uploadProjectFiles,
 } from '@/api/projects'
 import { errorMessage } from '@/api/http'
+import type { UploadProgress } from '@/api/http'
 import type { DirEntry, ProjectDetailResponse } from '@/types/api'
 
 const route = useRoute()
@@ -95,7 +98,11 @@ const projectID = Number(route.params.id)
 
 const loading = ref(false)
 const uploading = ref(false)
+const uploadProgress = ref<UploadProgress | null>(null)
 const savingConfig = ref(false)
+const runningAction = ref<'start' | 'stop' | 'restart' | ''>('')
+const deletingProject = ref(false)
+const explorerBusy = ref<{ action: string; path?: string } | null>(null)
 const detail = ref<ProjectDetailResponse>()
 const config = reactive({ entryFile: '', args: '', runUser: '' })
 
@@ -137,14 +144,18 @@ async function uploadFiles(files: Array<{ file: File; path: string }>) {
     return
   }
   uploading.value = true
+  uploadProgress.value = { loaded: 0, total: files.reduce((sum, item) => sum + item.file.size, 0), percent: 0 }
   try {
-    const result = await uploadProjectFiles(projectID, detail.value?.current_dir || '', files)
+    const result = await uploadProjectFiles(projectID, detail.value?.current_dir || '', files, (progress) => {
+      uploadProgress.value = progress
+    })
     ElMessage.success(result.message || '上传成功')
     await loadDetail()
   } catch (error) {
     ElMessage.error(errorMessage(error, '上传失败'))
   } finally {
     uploading.value = false
+    uploadProgress.value = null
   }
 }
 
@@ -163,6 +174,7 @@ async function saveConfig() {
 }
 
 async function setEntry(path: string) {
+  explorerBusy.value = { action: 'set-entry', path }
   try {
     const result = await saveProjectConfig(projectID, path, config.args, config.runUser)
     ElMessage.success(result.message || '主程序已更新并生效')
@@ -170,42 +182,61 @@ async function setEntry(path: string) {
     await loadDetail()
   } catch (error) {
     ElMessage.error(errorMessage(error, '设置主程序失败'))
+  } finally {
+    explorerBusy.value = null
   }
 }
 
 async function runAction(action: 'start' | 'stop' | 'restart') {
+  if (runningAction.value) return
+  runningAction.value = action
   try {
     const result = await projectAction(projectID, action)
     ElMessage.success(result.message || '操作成功')
     await loadDetail()
   } catch (error) {
     ElMessage.error(errorMessage(error, '操作失败'))
+  } finally {
+    runningAction.value = ''
   }
 }
 
-async function handleCreateDir(name: string) {
-  await runExplorerTask(() => createDir(projectID, detail.value?.current_dir || '', name), '创建文件夹失败')
+async function handleCreateDir(name: string, done?: () => void) {
+  await runExplorerTask(() => createDir(projectID, detail.value?.current_dir || '', name), '创建文件夹失败', { action: 'create-dir' }, done)
 }
 
-async function handleCreateFile(name: string) {
-  await runExplorerTask(() => createFile(projectID, detail.value?.current_dir || '', name), '创建文件失败')
+async function handleCreateFile(name: string, done?: () => void) {
+  await runExplorerTask(() => createFile(projectID, detail.value?.current_dir || '', name), '创建文件失败', { action: 'create-file' }, done)
 }
 
-async function handleRename(path: string, name: string) {
-  await runExplorerTask(() => renameEntry(projectID, path, name), '重命名失败')
+async function handleRename(path: string, name: string, done?: () => void) {
+  await runExplorerTask(() => renameEntry(projectID, path, name), '重命名失败', { action: 'rename', path }, done)
 }
 
 async function handleDeleteEntry(entry: DirEntry) {
-  await runExplorerTask(() => (entry.is_dir ? deleteDir(projectID, entry.path) : deleteFile(projectID, entry.path)), '删除失败')
+  await runExplorerTask(
+    () => (entry.is_dir ? deleteDir(projectID, entry.path) : deleteFile(projectID, entry.path)),
+    '删除失败',
+    { action: 'delete', path: entry.path },
+  )
 }
 
-async function runExplorerTask(task: () => Promise<{ message?: string }>, fallback: string) {
+async function runExplorerTask(
+  task: () => Promise<{ message?: string }>,
+  fallback: string,
+  busy: { action: string; path?: string },
+  done?: () => void,
+) {
+  explorerBusy.value = busy
   try {
     const result = await task()
     ElMessage.success(result.message || '操作成功')
     await loadDetail()
   } catch (error) {
     ElMessage.error(errorMessage(error, fallback))
+  } finally {
+    explorerBusy.value = null
+    done?.()
   }
 }
 
@@ -223,12 +254,15 @@ async function confirmDeleteProject() {
     cancelButtonText: '取消',
     type: 'warning',
   })
+  deletingProject.value = true
   try {
     const result = await deleteProject(projectID, name)
     ElMessage.success(result.message || '项目已删除')
     await router.push('/projects')
   } catch (error) {
     ElMessage.error(errorMessage(error, '删除失败'))
+  } finally {
+    deletingProject.value = false
   }
 }
 
