@@ -13,6 +13,33 @@
       </div>
     </div>
 
+    <el-card shadow="never">
+      <template #header>进程资源</template>
+      <div class="resource-summary">
+        <div class="resource-item">
+          <span class="muted">PID</span>
+          <span class="mono">{{ processStatus?.pid || '-' }}</span>
+        </div>
+        <div class="resource-item">
+          <span class="muted">CPU</span>
+          <span>{{ formatPercent(processStatus?.cpu_percent) }}</span>
+        </div>
+        <div class="resource-item">
+          <span class="muted">内存</span>
+          <span>{{ formatBytes(processStatus?.memory_bytes) }}</span>
+        </div>
+        <div class="resource-item">
+          <span class="muted">端口</span>
+          <span class="mono">{{ formatPorts(processStatus?.listen_ports) }}</span>
+        </div>
+        <div class="resource-item">
+          <span class="muted">连接数</span>
+          <span>{{ processStatus?.connection_count ?? '-' }}</span>
+        </div>
+      </div>
+      <p v-if="processStatus?.message" class="muted">{{ processStatus.message }}</p>
+    </el-card>
+
     <div class="card-grid">
       <el-card v-loading="loading" shadow="never">
         <template #header>上传文件</template>
@@ -83,6 +110,7 @@ import {
   deleteFile,
   deleteProject,
   getProject,
+  getProjectProcessStatuses,
   projectAction,
   renameEntry,
   saveProjectConfig,
@@ -90,7 +118,7 @@ import {
 } from '@/api/projects'
 import { errorMessage } from '@/api/http'
 import type { UploadProgress } from '@/api/http'
-import type { DirEntry, ProjectDetailResponse } from '@/types/api'
+import type { DirEntry, ProcessSnapshot, ProjectDetailResponse } from '@/types/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -104,10 +132,13 @@ const runningAction = ref<'start' | 'stop' | 'restart' | ''>('')
 const deletingProject = ref(false)
 const explorerBusy = ref<{ action: string; path?: string } | null>(null)
 const detail = ref<ProjectDetailResponse>()
+const processStatus = ref<ProcessSnapshot>()
+const loadingProcessStatus = ref(false)
 const config = reactive({ entryFile: '', args: '', runUser: '' })
 
 onMounted(() => {
   void loadDetail()
+  void loadProcessStatus()
 })
 
 watch(
@@ -123,10 +154,25 @@ async function loadDetail() {
     config.entryFile = result.current_entry
     config.args = result.current_args
     config.runUser = result.project.run_user
+    void loadProcessStatus()
   } catch (error) {
     ElMessage.error(errorMessage(error, '加载项目失败'))
   } finally {
     loading.value = false
+  }
+}
+
+async function loadProcessStatus() {
+  if (loadingProcessStatus.value) return
+
+  loadingProcessStatus.value = true
+  try {
+    const result = await getProjectProcessStatuses()
+    processStatus.value = result.processes[String(projectID)]
+  } catch {
+    ElMessage.warning('进程资源刷新失败，稍后重试')
+  } finally {
+    loadingProcessStatus.value = false
   }
 }
 
@@ -269,4 +315,55 @@ async function confirmDeleteProject() {
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
+
+function formatPercent(value?: number) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '-'
+  return `${value.toFixed(value >= 10 ? 0 : 1)}%`
+}
+
+function formatBytes(value?: number) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '-'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let size = value
+  let unitIndex = 0
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex += 1
+  }
+  return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
+}
+
+function formatPorts(ports?: number[]) {
+  return ports?.length ? ports.join(', ') : '-'
+}
 </script>
+
+<style scoped>
+.resource-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.resource-item {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.resource-item span:last-child {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 980px) {
+  .resource-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .resource-summary {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

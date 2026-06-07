@@ -21,6 +21,21 @@
         <el-table-column label="状态" width="130">
           <template #default="{ row }"><StatusTag :status="row.status" :text="row.status_text" /></template>
         </el-table-column>
+        <el-table-column label="PID" width="100">
+          <template #default="{ row }"><span class="mono">{{ processInfo(row.id)?.pid || '-' }}</span></template>
+        </el-table-column>
+        <el-table-column label="CPU" width="100">
+          <template #default="{ row }">{{ formatPercent(processInfo(row.id)?.cpu_percent) }}</template>
+        </el-table-column>
+        <el-table-column label="内存" width="120">
+          <template #default="{ row }">{{ formatBytes(processInfo(row.id)?.memory_bytes) }}</template>
+        </el-table-column>
+        <el-table-column label="端口" min-width="140">
+          <template #default="{ row }"><span class="mono muted">{{ formatPorts(processInfo(row.id)?.listen_ports) }}</span></template>
+        </el-table-column>
+        <el-table-column label="连接数" width="100">
+          <template #default="{ row }">{{ processInfo(row.id)?.connection_count ?? '-' }}</template>
+        </el-table-column>
         <el-table-column label="主程序" min-width="180">
           <template #default="{ row }"><span class="mono muted">{{ row.entry_file || '未配置' }}</span></template>
         </el-table-column>
@@ -74,14 +89,16 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import StatusTag from '@/components/StatusTag.vue'
-import { cloneProject, createProject, deleteProject, getProjectStatuses, getProjects, projectAction } from '@/api/projects'
+import { cloneProject, createProject, deleteProject, getProjectProcessStatuses, getProjects, projectAction } from '@/api/projects'
 import { errorMessage } from '@/api/http'
-import type { Project } from '@/types/api'
+import type { ProcessSnapshot, Project } from '@/types/api'
 
 const router = useRouter()
 const loading = ref(false)
+const refreshingStatuses = ref(false)
 const projects = ref<Project[]>([])
 const projectsDir = ref('')
+const processStatuses = ref<Record<string, ProcessSnapshot>>({})
 let timer: number | undefined
 
 const createDialog = reactive({ visible: false, name: '', loading: false })
@@ -104,6 +121,7 @@ async function loadProjects() {
     const result = await getProjects()
     projects.value = result.projects
     projectsDir.value = result.projects_dir
+    await refreshStatuses()
   } catch (error) {
     ElMessage.error(errorMessage(error, '加载项目失败'))
   } finally {
@@ -112,15 +130,21 @@ async function loadProjects() {
 }
 
 async function refreshStatuses() {
+  if (refreshingStatuses.value) return
+
+  refreshingStatuses.value = true
   try {
-    const result = await getProjectStatuses()
+    const result = await getProjectProcessStatuses()
+    processStatuses.value = result.processes
     for (const project of projects.value) {
-      const status = result.statuses[String(project.id)] || 'UNKNOWN'
-      project.status = status
-      project.status_text = statusText(status)
+      const snapshot = processInfo(project.id)
+      project.status = snapshot?.status || 'UNKNOWN'
+      project.status_text = snapshot?.status_text || statusText(project.status)
     }
   } catch {
     ElMessage.warning('状态刷新失败，稍后重试')
+  } finally {
+    refreshingStatuses.value = false
   }
 }
 
@@ -214,6 +238,31 @@ function statusText(status: string) {
     default:
       return '未知'
   }
+}
+
+function processInfo(projectID: number) {
+  return processStatuses.value[String(projectID)]
+}
+
+function formatPercent(value?: number) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '-'
+  return `${value.toFixed(value >= 10 ? 0 : 1)}%`
+}
+
+function formatBytes(value?: number) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '-'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let size = value
+  let unitIndex = 0
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex += 1
+  }
+  return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
+}
+
+function formatPorts(ports?: number[]) {
+  return ports?.length ? ports.join(', ') : '-'
 }
 
 function escapeRegExp(value: string) {
