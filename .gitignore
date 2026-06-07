@@ -4,6 +4,7 @@ projects/
 *.exe
 .build-release
 dist
+.worktrees/
 web/node_modules/
 internal/server/static/index.html
 internal/server/static/assets/*
