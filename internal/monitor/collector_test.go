@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"supervisorpanel/internal/db"
 )
 
 type stubSupervisor struct {
@@ -18,6 +20,16 @@ type stubSupervisor struct {
 
 func (s stubSupervisor) StatusWithPID(string) (string, int) {
 	return s.status, s.pid
+}
+
+type mapSupervisor map[string]struct {
+	status string
+	pid    int
+}
+
+func (s mapSupervisor) StatusWithPID(slug string) (string, int) {
+	status := s[slug]
+	return status.status, status.pid
 }
 
 func TestProcessSnapshotStoppedProcessIsUnavailable(t *testing.T) {
@@ -62,8 +74,8 @@ func TestProcessSnapshotStartingProcessDoesNotReadProc(t *testing.T) {
 }
 
 func TestProcessSnapshotKeepsMetricsAvailableWhenNetworkReadFails(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Linux proc snapshot test is skipped on Windows")
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux proc snapshot test is skipped on non-Linux")
 	}
 
 	networkErr := errors.New("network read failed")
@@ -132,6 +144,79 @@ func TestNewLeavesSampleDelayZeroForDefaultDelay(t *testing.T) {
 	}
 }
 
+func TestProcessSnapshotsBatchesRunningProcessSamplingWithOneSleep(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux proc snapshot test is skipped on non-Linux")
+	}
+
+	procRoot := t.TempDir()
+	statPath := filepath.Join(procRoot, "stat")
+	meminfoPath := filepath.Join(procRoot, "meminfo")
+	processStatPaths := map[string]int{
+		filepath.Join(procRoot, "1234", "stat"): 0,
+		filepath.Join(procRoot, "5678", "stat"): 0,
+	}
+	statusPaths := map[string]string{
+		filepath.Join(procRoot, "1234", "status"): "Name:\tone\nVmRSS:\t  100 kB\n",
+		filepath.Join(procRoot, "5678", "status"): "Name:\ttwo\nVmRSS:\t  200 kB\n",
+	}
+	statReads := 0
+	sleepCalls := 0
+	collector := Collector{
+		ProcRoot:    procRoot,
+		SampleDelay: time.Nanosecond,
+		Supervisor: mapSupervisor{
+			"one": {status: "RUNNING", pid: 1234},
+			"two": {status: "RUNNING", pid: 5678},
+		},
+		Sleep: func(time.Duration) {
+			sleepCalls++
+		},
+		ReadFile: func(path string) ([]byte, error) {
+			switch {
+			case path == statPath:
+				statReads++
+				if statReads == 1 {
+					return []byte("cpu 100 0 0 100\n"), nil
+				}
+				return []byte("cpu 150 0 0 150\n"), nil
+			case path == meminfoPath:
+				return []byte("MemTotal: 1000 kB\nMemAvailable: 500 kB\n"), nil
+			case statusPaths[path] != "":
+				return []byte(statusPaths[path]), nil
+			default:
+				if reads, ok := processStatPaths[path]; ok {
+					processStatPaths[path] = reads + 1
+					pid := "1234"
+					if strings.Contains(path, "5678") {
+						pid = "5678"
+					}
+					if reads == 0 {
+						return []byte(pid + " (node) S 1 2 3 0 -1 4194304 10 0 0 0 10 10 0 0 20 0 7 0 123456 1000000 4096"), nil
+					}
+					return []byte(pid + " (node) S 1 2 3 0 -1 4194304 10 0 0 0 20 20 0 0 20 0 7 0 123456 1000000 4096"), nil
+				}
+				return nil, os.ErrNotExist
+			}
+		},
+		ReadDir: func(string) ([]os.DirEntry, error) {
+			return nil, os.ErrNotExist
+		},
+	}
+
+	got := collector.ProcessSnapshots([]db.Project{
+		{ID: 1, Slug: "one"},
+		{ID: 2, Slug: "two"},
+	})
+
+	if sleepCalls != 1 {
+		t.Fatalf("sleepCalls = %d, want 1", sleepCalls)
+	}
+	if !got["1"].Available || !got["2"].Available {
+		t.Fatalf("snapshots availability = %v/%v, want both true", got["1"].Available, got["2"].Available)
+	}
+}
+
 func TestSummarizeSocketsCountsMatchingListenAndEstablishedRows(t *testing.T) {
 	rows := []procNetRow{
 		{proto: "tcp", port: 8080, inode: "listen", listen: true},
@@ -156,8 +241,8 @@ func TestSummarizeSocketsCountsMatchingListenAndEstablishedRows(t *testing.T) {
 }
 
 func TestSystemSnapshotReadsLinuxProcSamples(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Linux proc snapshot test is skipped on Windows")
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux proc snapshot test is skipped on non-Linux")
 	}
 
 	procRoot := t.TempDir()

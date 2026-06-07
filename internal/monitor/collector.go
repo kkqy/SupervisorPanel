@@ -27,7 +27,14 @@ type Collector struct {
 	ReadFile    func(string) ([]byte, error)
 	ReadLink    func(string) (string, error)
 	ReadDir     func(string) ([]os.DirEntry, error)
+	Sleep       func(time.Duration)
 	Supervisor  SupervisorStatus
+}
+
+type batchProcessSample struct {
+	key  string
+	pid  int
+	prev processTimes
 }
 
 func New(supervisor SupervisorStatus) Collector {
@@ -46,7 +53,7 @@ func (c Collector) SystemSnapshot(diskPath string) (SystemSnapshot, error) {
 	if err != nil {
 		return SystemSnapshot{}, err
 	}
-	time.Sleep(sampleDelay(c))
+	sleep(c, sampleDelay(c))
 	nextCPU, _, err := readCPU(c)
 	if err != nil {
 		return SystemSnapshot{}, err
@@ -99,7 +106,7 @@ func (c Collector) ProcessSnapshot(slug string) ProcessSnapshot {
 		snapshot.Message = err.Error()
 		return snapshot
 	}
-	time.Sleep(sampleDelay(c))
+	sleep(c, sampleDelay(c))
 	nextCPU, _, err := readCPU(c)
 	if err != nil {
 		snapshot.Message = err.Error()
@@ -141,10 +148,118 @@ func (c Collector) ProcessSnapshot(slug string) ProcessSnapshot {
 
 func (c Collector) ProcessSnapshots(projects []db.Project) map[string]ProcessSnapshot {
 	snapshots := make(map[string]ProcessSnapshot, len(projects))
-	for _, project := range projects {
-		snapshots[strconv.FormatInt(project.ID, 10)] = c.ProcessSnapshot(project.Slug)
+	if len(projects) == 0 {
+		return snapshots
 	}
+
+	running := make([]batchProcessSample, 0, len(projects))
+
+	for _, project := range projects {
+		status, pid := "UNKNOWN", 0
+		if c.Supervisor != nil {
+			status, pid = c.Supervisor.StatusWithPID(project.Slug)
+		}
+		key := strconv.FormatInt(project.ID, 10)
+		snapshots[key] = ProcessSnapshot{
+			Status:     status,
+			StatusText: statusTextCN(status),
+			PID:        pid,
+		}
+		if status != "RUNNING" || pid <= 0 {
+			snapshot := snapshots[key]
+			snapshot.Message = "进程未运行"
+			snapshots[key] = snapshot
+			continue
+		}
+		if runtime.GOOS != "linux" {
+			snapshot := snapshots[key]
+			snapshot.Message = "进程监控仅支持 Linux"
+			snapshots[key] = snapshot
+			continue
+		}
+		running = append(running, batchProcessSample{key: key, pid: pid})
+	}
+	if len(running) == 0 {
+		return snapshots
+	}
+
+	prevCPU, cpuCount, err := readCPU(c)
+	if err != nil {
+		markRunningUnavailable(snapshots, running, err)
+		return snapshots
+	}
+
+	active := running[:0]
+	for _, process := range running {
+		prevProc, err := readProcessTimes(c, process.pid)
+		if err != nil {
+			snapshot := snapshots[process.key]
+			snapshot.Message = err.Error()
+			snapshots[process.key] = snapshot
+			continue
+		}
+		process.prev = prevProc
+		active = append(active, process)
+	}
+	if len(active) == 0 {
+		return snapshots
+	}
+
+	sleep(c, sampleDelay(c))
+	nextCPU, _, err := readCPU(c)
+	if err != nil {
+		markRunningUnavailable(snapshots, active, err)
+		return snapshots
+	}
+	memory, err := readMemory(c)
+	if err != nil {
+		markRunningUnavailable(snapshots, active, err)
+		return snapshots
+	}
+
+	for _, process := range active {
+		snapshot := snapshots[process.key]
+		nextProc, err := readProcessTimes(c, process.pid)
+		if err != nil {
+			snapshot.Message = err.Error()
+			snapshots[process.key] = snapshot
+			continue
+		}
+		rss, err := readProcessRSS(c, process.pid)
+		if err != nil {
+			snapshot.Message = err.Error()
+			snapshots[process.key] = snapshot
+			continue
+		}
+
+		snapshot.CPUPercent = processCPUPercent(process.prev, nextProc, prevCPU, nextCPU, cpuCount)
+		snapshot.MemoryBytes = rss
+		if memory.TotalBytes > 0 {
+			snapshot.MemoryPercent = round1(float64(rss) * 100 / float64(memory.TotalBytes))
+		}
+		ports, connections, err := readProcessNetwork(c, process.pid)
+		if err != nil {
+			snapshot.Message = err.Error()
+			snapshot.Available = true
+			snapshots[process.key] = snapshot
+			continue
+		}
+
+		snapshot.ListenPorts = ports
+		snapshot.ConnectionCount = connections
+		snapshot.Available = true
+		snapshots[process.key] = snapshot
+	}
+
 	return snapshots
+}
+
+func markRunningUnavailable(snapshots map[string]ProcessSnapshot, running []batchProcessSample, err error) {
+	for _, process := range running {
+		snapshot := snapshots[process.key]
+		snapshot.Message = err.Error()
+		snapshots[process.key] = snapshot
+	}
 }
 
 func sampleDelay(c Collector) time.Duration {
@@ -152,6 +267,14 @@ func sampleDelay(c Collector) time.Duration {
 		return defaultSampleDelay
 	}
 	return c.SampleDelay
+}
+
+func sleep(c Collector, delay time.Duration) {
+	if c.Sleep != nil {
+		c.Sleep(delay)
+		return
+	}
+	time.Sleep(delay)
 }
 
 func readCPU(c Collector) (cpuTimes, int, error) {
