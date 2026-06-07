@@ -6,12 +6,95 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"supervisorpanel/internal/config"
+	"supervisorpanel/internal/db"
+	"supervisorpanel/internal/monitor"
 	"supervisorpanel/internal/systemctl"
 )
+
+type fakeMonitorCollector struct {
+	system    monitor.SystemSnapshot
+	systemErr error
+	processes map[string]monitor.ProcessSnapshot
+}
+
+func (f fakeMonitorCollector) SystemSnapshot(path string) (monitor.SystemSnapshot, error) {
+	return f.system, f.systemErr
+}
+
+func (f fakeMonitorCollector) ProcessSnapshots(projects []db.Project) map[string]monitor.ProcessSnapshot {
+	return f.processes
+}
+
+func newTestStore(t *testing.T) *db.Store {
+	t.Helper()
+	store, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open test store: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("close test store: %v", err)
+		}
+	})
+	return store
+}
+
+func TestHandleAPISystemStatus(t *testing.T) {
+	s := &Server{
+		cfg: config.Config{ProjectsDir: "/srv/projects"},
+		monitor: fakeMonitorCollector{
+			system: monitor.SystemSnapshot{
+				CPU: monitor.CPUSnapshot{UsagePercent: 12.5},
+			},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/system/status", nil)
+	rr := httptest.NewRecorder()
+
+	s.handleAPISystemStatus(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if !strings.Contains(rr.Body.String(), `"usage_percent":12.5`) {
+		t.Fatalf("body = %q, want usage_percent 12.5", rr.Body.String())
+	}
+}
+
+func TestHandleAPIProjectProcessStatuses(t *testing.T) {
+	store := newTestStore(t)
+	projectID, err := store.CreateProject(db.Project{Name: "demo", Slug: "demo", Path: "/srv/projects/demo", RunUser: "www-data"})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	s := &Server{
+		store: store,
+		monitor: fakeMonitorCollector{
+			processes: map[string]monitor.ProcessSnapshot{
+				strconv.FormatInt(projectID, 10): {Status: "RUNNING", PID: 1234, Available: true},
+			},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/process-statuses", nil)
+	rr := httptest.NewRecorder()
+
+	s.handleAPIProjectProcessStatuses(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if !strings.Contains(rr.Body.String(), `"pid":1234`) {
+		t.Fatalf("body = %q, want pid 1234", rr.Body.String())
+	}
+}
 
 func TestHandleAPIRestartSupervisorReturnsBeforeCommandCompletes(t *testing.T) {
 	started := make(chan struct{})

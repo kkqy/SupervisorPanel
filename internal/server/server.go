@@ -27,6 +27,7 @@ import (
 	"supervisorpanel/internal/auth"
 	"supervisorpanel/internal/config"
 	"supervisorpanel/internal/db"
+	"supervisorpanel/internal/monitor"
 	"supervisorpanel/internal/supervisor"
 	"supervisorpanel/internal/systemctl"
 )
@@ -38,7 +39,13 @@ type Server struct {
 	cfg       config.Config
 	store     *db.Store
 	sup       *supervisor.Client
+	monitor   monitorCollector
 	systemctl systemctl.Client
+}
+
+type monitorCollector interface {
+	SystemSnapshot(path string) (monitor.SystemSnapshot, error)
+	ProcessSnapshots(projects []db.Project) map[string]monitor.ProcessSnapshot
 }
 
 type ProjectDirEntry struct {
@@ -95,7 +102,7 @@ const maxEditableFileSize = 1 << 20
 
 func New(cfg config.Config, store *db.Store, sup *supervisor.Client) (*Server, error) {
 	_ = mime.AddExtensionType(".js", "text/javascript; charset=utf-8")
-	return &Server{cfg: cfg, store: store, sup: sup, systemctl: systemctl.Client{Bin: cfg.SystemctlBin}}, nil
+	return &Server{cfg: cfg, store: store, sup: sup, monitor: monitor.New(sup), systemctl: systemctl.Client{Bin: cfg.SystemctlBin}}, nil
 }
 
 func (s *Server) Routes() http.Handler {
@@ -323,6 +330,14 @@ func (s *Server) handleAPIRoute(w http.ResponseWriter, r *http.Request) {
 		s.handleAPIProjectStatuses(w, r)
 		return
 	}
+	if path == "system/status" {
+		s.handleAPISystemStatus(w, r)
+		return
+	}
+	if path == "projects/process-statuses" {
+		s.handleAPIProjectProcessStatuses(w, r)
+		return
+	}
 	if path == "system/supervisor/restart" {
 		s.handleAPIRestartSupervisor(w, r)
 		return
@@ -405,6 +420,40 @@ func (s *Server) handleAPIProjectStatuses(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.handleProjectStatuses(w, r)
+}
+
+func (s *Server) handleAPISystemStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	collector := s.monitor
+	if collector == nil {
+		collector = monitor.New(s.sup)
+	}
+	snapshot, err := collector.SystemSnapshot(s.cfg.ProjectsDir)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "system": snapshot})
+}
+
+func (s *Server) handleAPIProjectProcessStatuses(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	projects, err := s.store.ListProjects()
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	collector := s.monitor
+	if collector == nil {
+		collector = monitor.New(s.sup)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "processes": collector.ProcessSnapshots(projects)})
 }
 
 func (s *Server) handleAPIRestartSupervisor(w http.ResponseWriter, r *http.Request) {
