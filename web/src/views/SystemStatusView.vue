@@ -45,6 +45,7 @@ import { getSystemStatus } from '@/api/system'
 import type { SystemSnapshot } from '@/types/api'
 
 const loading = ref(false)
+const refreshing = ref(false)
 const errorText = ref('')
 const status = ref<SystemSnapshot>()
 let timer: number | undefined
@@ -73,7 +74,7 @@ const diskSummary = computed(() => {
 onMounted(() => {
   void loadStatus()
   timer = window.setInterval(() => {
-    if (!document.hidden) void loadStatus()
+    if (!document.hidden) void loadStatus(false)
   }, 5000)
 })
 
@@ -81,8 +82,11 @@ onBeforeUnmount(() => {
   if (timer) window.clearInterval(timer)
 })
 
-async function loadStatus() {
-  loading.value = true
+async function loadStatus(showLoading = true) {
+  if (refreshing.value) return
+
+  refreshing.value = true
+  if (showLoading) loading.value = true
   try {
     const result = await getSystemStatus()
     status.value = result.system
@@ -90,7 +94,8 @@ async function loadStatus() {
   } catch (error) {
     errorText.value = errorMessage(error, '加载系统状态失败')
   } finally {
-    loading.value = false
+    refreshing.value = false
+    if (showLoading) loading.value = false
   }
 }
 
