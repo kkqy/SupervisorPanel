@@ -97,19 +97,38 @@ func (c *Client) Control(action, slug string) (string, error) {
 }
 
 func (c *Client) Status(slug string) string {
+	status, _ := c.StatusWithPID(slug)
+	return status
+}
+
+func (c *Client) StatusWithPID(slug string) (string, int) {
 	out, err := c.run("status", c.ProgramName(slug))
 	if out == "" && err != nil {
-		return "UNKNOWN"
+		return "UNKNOWN", 0
 	}
+	return parseStatusLine(out)
+}
+
+func parseStatusLine(out string) (string, int) {
 	fields := strings.Fields(out)
 	if len(fields) < 2 {
-		return "UNKNOWN"
+		return "UNKNOWN", 0
 	}
 	status := strings.ToUpper(strings.TrimSpace(fields[1]))
-	if status == "ERROR" {
-		return "UNKNOWN"
+	if status == "" || status == "ERROR" {
+		return "UNKNOWN", 0
 	}
-	return status
+	pid := 0
+	for i := 0; i < len(fields)-1; i++ {
+		if strings.EqualFold(fields[i], "pid") {
+			value := strings.TrimSuffix(fields[i+1], ",")
+			if parsed, err := strconv.Atoi(value); err == nil {
+				pid = parsed
+			}
+			break
+		}
+	}
+	return status, pid
 }
 
 func (c *Client) RemoveProject(slug string) error {
