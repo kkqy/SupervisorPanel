@@ -46,6 +46,29 @@ a {
   gap: 16px;
 }
 
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.metric-grid .el-card__body {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+
+.metric-value {
+  font-size: 24px;
+  font-weight: 650;
+}
+
+.resource-summary {
+  color: var(--el-text-color-secondary);
+  text-align: center;
+  word-break: break-all;
+}
+
 .toolbar {
   display: flex;
   align-items: center;
@@ -96,6 +119,10 @@ a {
 
 @media (max-width: 980px) {
   .card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-grid {
     grid-template-columns: 1fr;
   }
 }

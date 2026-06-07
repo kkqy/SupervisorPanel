@@ -8,6 +8,7 @@
 
       <el-menu class="nav-menu" mode="horizontal" :ellipsis="false" :default-active="activePath" router>
         <el-menu-item index="/projects">项目列表</el-menu-item>
+        <el-menu-item index="/system/status">系统状态</el-menu-item>
         <el-menu-item index="/account/password">修改密码</el-menu-item>
       </el-menu>
 
@@ -33,7 +34,11 @@ const route = useRoute()
 const router = useRouter()
 const restartingSupervisor = ref(false)
 
-const activePath = computed(() => (route.path.startsWith('/account/password') ? '/account/password' : '/projects'))
+const activePath = computed(() => {
+  if (route.path.startsWith('/account/password')) return '/account/password'
+  if (route.path.startsWith('/system/status')) return '/system/status'
+  return '/projects'
+})
 
 async function confirmRestartSupervisor() {
   try {

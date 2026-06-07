@@ -6,6 +6,7 @@ import ProjectDetailView from '@/views/ProjectDetailView.vue'
 import ProjectLogsView from '@/views/ProjectLogsView.vue'
 import EditFileView from '@/views/EditFileView.vue'
 import PasswordView from '@/views/PasswordView.vue'
+import SystemStatusView from '@/views/SystemStatusView.vue'
 import { getMe } from '@/api/auth'
 
 const router = createRouter({
@@ -18,6 +19,7 @@ const router = createRouter({
     { path: '/projects/:id(\\d+)/logs', name: 'project-logs', component: ProjectLogsView },
     { path: '/projects/:id(\\d+)/files/edit', name: 'edit-file', component: EditFileView },
     { path: '/account/password', name: 'password', component: PasswordView },
+    { path: '/system/status', name: 'system-status', component: SystemStatusView },
     { path: '/:pathMatch(.*)*', redirect: '/projects' },
   ],
 })
