@@ -20,7 +20,7 @@ type processTimes struct {
 
 type procNetRow struct {
 	proto  string
-	port   uint16
+	port   int
 	inode  string
 	listen bool
 }
@@ -135,15 +135,13 @@ func parseProcessStatLine(line string) (processTimes, error) {
 	return processTimes{pid: pid, totalTicks: utime + stime}, nil
 }
 
-func processCPUPercent(prev, next processTimes, basis ...uint64) float64 {
-	if next.totalTicks <= prev.totalTicks {
+func processCPUPercent(prev, next processTimes, prevCPU, nextCPU cpuTimes, cpuCount int) float64 {
+	if next.totalTicks <= prev.totalTicks || nextCPU.total <= prevCPU.total || cpuCount <= 0 {
 		return 0
 	}
-	delta := next.totalTicks - prev.totalTicks
-	if len(basis) == 0 || basis[0] == 0 {
-		return round1(float64(delta))
-	}
-	return round1(float64(delta) * 100 / float64(basis[0]))
+	deltaProc := next.totalTicks - prev.totalTicks
+	deltaTotal := nextCPU.total - prevCPU.total
+	return round1(float64(deltaProc) / float64(deltaTotal) * float64(cpuCount) * 100)
 }
 
 func parseRSSBytesFromStatus(content string) (uint64, error) {
@@ -157,7 +155,7 @@ func parseRSSBytesFromStatus(content string) (uint64, error) {
 			return value * 1024, nil
 		}
 	}
-	return 0, fmt.Errorf("VmRSS missing")
+	return 0, nil
 }
 
 func parseSocketInode(target string) (string, bool) {
@@ -198,7 +196,7 @@ func parseProcNet(content, proto string) ([]procNetRow, error) {
 	return rows, nil
 }
 
-func parseHexPort(localAddress string) (uint16, error) {
+func parseHexPort(localAddress string) (int, error) {
 	_, portHex, ok := strings.Cut(localAddress, ":")
 	if !ok || portHex == "" {
 		return 0, fmt.Errorf("invalid local address %q", localAddress)
@@ -207,24 +205,23 @@ func parseHexPort(localAddress string) (uint16, error) {
 	if err != nil {
 		return 0, fmt.Errorf("parse port %q: %w", portHex, err)
 	}
-	return uint16(value), nil
+	return int(value), nil
 }
 
-func summarizeSockets(rows []procNetRow, processInodes map[string]struct{}) ([]uint16, int) {
-	seenPorts := make(map[uint16]struct{})
+func summarizeSockets(rows []procNetRow, processInodes map[string]struct{}) ([]int, int) {
+	seenPorts := make(map[int]struct{})
 	connectionCount := 0
 	for _, row := range rows {
 		if _, ok := processInodes[row.inode]; !ok {
 			continue
 		}
+		connectionCount++
 		if row.listen {
 			seenPorts[row.port] = struct{}{}
-			continue
 		}
-		connectionCount++
 	}
 
-	ports := make([]uint16, 0, len(seenPorts))
+	ports := make([]int, 0, len(seenPorts))
 	for port := range seenPorts {
 		ports = append(ports, port)
 	}

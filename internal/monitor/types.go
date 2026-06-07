@@ -26,21 +26,22 @@ type DiskSnapshot struct {
 
 // SystemSnapshot 汇总系统层面的监控数据。
 type SystemSnapshot struct {
-	CollectedAt time.Time      `json:"collected_at"`
 	CPU         CPUSnapshot    `json:"cpu"`
 	Memory      MemorySnapshot `json:"memory"`
-	Disks       []DiskSnapshot `json:"disks"`
+	Disk        DiskSnapshot   `json:"disk"`
+	CollectedAt time.Time      `json:"collected_at"`
 }
 
 // ProcessSnapshot 是单个进程的监控数据快照。
 type ProcessSnapshot struct {
-	PID             int       `json:"pid"`
-	Name            string    `json:"name"`
-	CollectedAt     time.Time `json:"collected_at"`
-	StatusText      string    `json:"status_text"`
-	CPUPercent      float64   `json:"cpu_percent"`
-	RSSBytes        uint64    `json:"memory_bytes"`
-	MemoryPercent   float64   `json:"memory_percent"`
-	ListeningPorts  []uint16  `json:"listen_ports"`
-	ConnectionCount int       `json:"connection_count"`
+	Status          string  `json:"status"`
+	StatusText      string  `json:"status_text"`
+	PID             int     `json:"pid"`
+	CPUPercent      float64 `json:"cpu_percent"`
+	MemoryBytes     uint64  `json:"memory_bytes"`
+	MemoryPercent   float64 `json:"memory_percent"`
+	ListenPorts     []int   `json:"listen_ports"`
+	ConnectionCount int     `json:"connection_count"`
+	Available       bool    `json:"available"`
+	Message         string  `json:"message"`
 }
