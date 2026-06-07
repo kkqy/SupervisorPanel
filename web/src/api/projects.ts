@@ -3,6 +3,7 @@ import type {
   ActionResponse,
   FileContentResponse,
   LogsResponse,
+  ProcessStatusesResponse,
   ProjectDetailResponse,
   ProjectsResponse,
   StatusesResponse,
@@ -14,6 +15,10 @@ export function getProjects() {
 
 export function getProjectStatuses() {
   return request<StatusesResponse>('/api/projects/statuses')
+}
+
+export function getProjectProcessStatuses() {
+  return request<ProcessStatusesResponse>('/api/projects/process-statuses')
 }
 
 export function getProject(projectID: number, dir = '') {

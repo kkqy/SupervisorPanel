@@ -60,6 +60,53 @@ export interface StatusesResponse extends ApiEnvelope {
   statuses: Record<string, string>
 }
 
+export interface CpuSnapshot {
+  usage_percent: number
+}
+
+export interface MemorySnapshot {
+  total_bytes: number
+  used_bytes: number
+  available_bytes: number
+  usage_percent: number
+}
+
+export interface DiskSnapshot {
+  path: string
+  total_bytes: number
+  used_bytes: number
+  free_bytes: number
+  usage_percent: number
+}
+
+export interface SystemSnapshot {
+  cpu: CpuSnapshot
+  memory: MemorySnapshot
+  disk: DiskSnapshot
+  collected_at: string
+}
+
+export interface SystemStatusResponse extends ApiEnvelope {
+  system: SystemSnapshot
+}
+
+export interface ProcessSnapshot {
+  status: string
+  status_text: string
+  pid: number
+  cpu_percent: number
+  memory_bytes: number
+  memory_percent: number
+  listen_ports: number[]
+  connection_count: number
+  available: boolean
+  message: string
+}
+
+export interface ProcessStatusesResponse extends ApiEnvelope {
+  processes: Record<string, ProcessSnapshot>
+}
+
 export interface ActionResponse extends ApiEnvelope {
   status?: string
   project_id?: number
