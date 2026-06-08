@@ -41,15 +41,50 @@
         </el-table-column>
         <el-table-column prop="run_user" label="运行用户" width="120" />
         <el-table-column prop="updated_at" label="更新时间" min-width="170" />
-        <el-table-column label="操作" width="430" fixed="right">
+        <el-table-column label="操作" width="230" fixed="right">
           <template #default="{ row }">
             <div class="toolbar">
-              <el-button size="small" @click="router.push(`/projects/${row.id}`)">编辑</el-button>
-              <el-button v-if="row.status !== 'RUNNING'" size="small" type="success" @click="runAction(row.id, 'start')">启动</el-button>
-              <el-button v-else size="small" type="warning" plain @click="runAction(row.id, 'stop')">停止</el-button>
-              <el-button size="small" @click="runAction(row.id, 'restart')">重启</el-button>
-              <el-button size="small" @click="openClone(row)">复制</el-button>
-              <el-button size="small" type="danger" plain @click="confirmDelete(row)">删除</el-button>
+              <el-button
+                v-if="row.status !== 'RUNNING'"
+                size="small"
+                type="success"
+                :loading="runningActionFor(row.id) === 'start'"
+                :disabled="!!runningActionFor(row.id) && runningActionFor(row.id) !== 'start'"
+                @click="runAction(row.id, 'start')"
+              >
+                启动
+              </el-button>
+              <el-button
+                v-else
+                size="small"
+                type="warning"
+                plain
+                :loading="runningActionFor(row.id) === 'stop'"
+                :disabled="!!runningActionFor(row.id) && runningActionFor(row.id) !== 'stop'"
+                @click="runAction(row.id, 'stop')"
+              >
+                停止
+              </el-button>
+              <el-button
+                size="small"
+                :loading="runningActionFor(row.id) === 'restart'"
+                :disabled="!!runningActionFor(row.id) && runningActionFor(row.id) !== 'restart'"
+                @click="runAction(row.id, 'restart')"
+              >
+                重启
+              </el-button>
+              <el-dropdown trigger="click" @command="(command: 'edit' | 'clone' | 'delete') => handleMoreCommand(command, row)">
+                <el-button size="small" :disabled="!!runningActionFor(row.id)">
+                  更多<el-icon class="el-icon--right"><MoreFilled /></el-icon>
+                </el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="edit">编辑</el-dropdown-item>
+                    <el-dropdown-item command="clone">复制</el-dropdown-item>
+                    <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </div>
           </template>
         </el-table-column>
@@ -87,6 +122,7 @@
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { MoreFilled } from '@element-plus/icons-vue'
 
 import StatusTag from '@/components/StatusTag.vue'
 import { cloneProject, createProject, deleteProject, getProjectProcessStatuses, getProjects, projectAction } from '@/api/projects'
@@ -99,6 +135,7 @@ const refreshingStatuses = ref(false)
 const projects = ref<Project[]>([])
 const projectsDir = ref('')
 const processStatuses = ref<Record<string, ProcessSnapshot>>({})
+const runningActions = reactive<Record<number, 'start' | 'stop' | 'restart'>>({})
 let timer: number | undefined
 
 const createDialog = reactive({ visible: false, name: '', loading: false })
@@ -193,13 +230,33 @@ async function submitClone() {
 }
 
 async function runAction(projectID: number, action: 'start' | 'stop' | 'restart') {
+  if (runningActions[projectID]) return
+  runningActions[projectID] = action
   try {
     const result = await projectAction(projectID, action)
     ElMessage.success(result.message || '操作成功')
     await refreshStatuses()
   } catch (error) {
     ElMessage.error(errorMessage(error, '操作失败'))
+  } finally {
+    delete runningActions[projectID]
   }
+}
+
+function runningActionFor(projectID: number) {
+  return runningActions[projectID] || ''
+}
+
+function handleMoreCommand(command: 'edit' | 'clone' | 'delete', project: Project) {
+  if (command === 'edit') {
+    void router.push(`/projects/${project.id}`)
+    return
+  }
+  if (command === 'clone') {
+    openClone(project)
+    return
+  }
+  void confirmDelete(project)
 }
 
 async function confirmDelete(project: Project) {
