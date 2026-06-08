@@ -74,9 +74,7 @@ go run ./cmd/supervisor-panel init-admin --db ./data/supervisor-panel.db --usern
 安装最新版本（默认 `latest`）：
 
 ```bash
-curl -fsSL -o /tmp/supervisorpanel-install.sh https://raw.githubusercontent.com/kkqy/SupervisorPanel/main/scripts/install.sh
-chmod +x /tmp/supervisorpanel-install.sh
-bash /tmp/supervisorpanel-install.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/kkqy/SupervisorPanel/main/scripts/install.sh)
 ```
 
 安装脚本会完成：
@@ -110,9 +108,7 @@ bash /tmp/supervisorpanel-install.sh
 升级最新版本（默认 `latest`）：
 
 ```bash
-curl -fsSL -o /tmp/supervisorpanel-upgrade.sh https://raw.githubusercontent.com/kkqy/SupervisorPanel/main/scripts/upgrade.sh
-chmod +x /tmp/supervisorpanel-upgrade.sh
-bash /tmp/supervisorpanel-upgrade.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/kkqy/SupervisorPanel/main/scripts/upgrade.sh)
 ```
 
 升级脚本行为：
