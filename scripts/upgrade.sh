@@ -205,6 +205,9 @@ chmod 755 "${BIN_PATH}"
 if [[ -f "${TMP_DIR}/upgrade.sh" ]]; then
   install -m 755 "${TMP_DIR}/upgrade.sh" "${INSTALL_DIR}/upgrade.sh"
 fi
+if [[ -f "${TMP_DIR}/uninstall.sh" ]]; then
+  install -m 755 "${TMP_DIR}/uninstall.sh" "${INSTALL_DIR}/uninstall.sh"
+fi
 
 echo "[6/6] 重启服务..."
 migrate_supervisor_panel_service_unit "${SERVICE_FILE}"

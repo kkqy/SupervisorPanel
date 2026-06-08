@@ -111,10 +111,12 @@ for raw_target in "${target_items[@]}"; do
   fi
   cp "${ROOT_DIR}/scripts/upgrade.sh" "${build_dir}/upgrade.sh"
   chmod 755 "${build_dir}/upgrade.sh"
+  cp "${ROOT_DIR}/scripts/uninstall.sh" "${build_dir}/uninstall.sh"
+  chmod 755 "${build_dir}/uninstall.sh"
 
   artifact_arch="$(artifact_arch_name "${goarch}")"
   package_name="supervisor-panel_${VERSION}_${goos}_${artifact_arch}.tar.gz"
-  tar -C "${build_dir}" -czf "${RELEASE_DIR}/${package_name}" supervisor-panel upgrade.sh
+  tar -C "${build_dir}" -czf "${RELEASE_DIR}/${package_name}" supervisor-panel upgrade.sh uninstall.sh
 done
 
 (

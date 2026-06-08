@@ -181,6 +181,9 @@ chmod 755 "${BIN_PATH}"
 if [[ -f "${TMP_DIR}/upgrade.sh" ]]; then
   install -m 755 "${TMP_DIR}/upgrade.sh" "${INSTALL_DIR}/upgrade.sh"
 fi
+if [[ -f "${TMP_DIR}/uninstall.sh" ]]; then
+  install -m 755 "${TMP_DIR}/uninstall.sh" "${INSTALL_DIR}/uninstall.sh"
+fi
 
 echo "[4/7] 写入环境配置..."
 cat > "${ENV_FILE}" <<EOF

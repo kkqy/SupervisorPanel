@@ -27,5 +27,6 @@ assert_standalone_script_reaches_root_check() {
 
 assert_standalone_script_reaches_root_check "install.sh"
 assert_standalone_script_reaches_root_check "upgrade.sh"
+assert_standalone_script_reaches_root_check "uninstall.sh"
 
 echo "standalone script tests passed"

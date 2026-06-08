@@ -128,6 +128,29 @@ bash <(curl -fsSL https://raw.githubusercontent.com/kkqy/SupervisorPanel/main/sc
 
 后台一键升级会复用同一个升级脚本。发现新版本后，管理员可在页面顶部“更新”入口提交升级任务；服务会异步执行脚本并自动重启。
 
+## 卸载（Debian/Ubuntu）
+
+默认卸载 `supervisor-panel` 服务、二进制文件和面板生成的 Supervisor 项目配置，保留项目、数据库、配置和日志：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/kkqy/SupervisorPanel/main/scripts/uninstall.sh)
+```
+
+如需跳过确认并完全删除项目、数据库、配置和日志，可使用：
+
+```bash
+ASSUME_YES=1 REMOVE_DATA=1 bash <(curl -fsSL https://raw.githubusercontent.com/kkqy/SupervisorPanel/main/scripts/uninstall.sh)
+```
+
+卸载脚本行为：
+
+1. 停止并禁用 `supervisor-panel` systemd 服务
+2. 删除 `/etc/systemd/system/supervisor-panel.service`
+3. 删除面板生成的 `/etc/supervisor/conf.d/sp_*.conf` 项目配置
+4. 删除 `/usr/local/bin/supervisor-panel`、`/opt/supervisor-panel/upgrade.sh` 和 `/opt/supervisor-panel/uninstall.sh`
+5. 默认保留 `/opt/supervisor-panel/projects`、`/var/lib/supervisor-panel`、`/etc/supervisor-panel` 和 `/var/log/supervisor-panel`
+6. 设置 `REMOVE_DATA=1` 时才会删除上述项目、数据库、配置和日志目录
+
 ## 发布打包（单机多架构交叉编译）
 
 ```bash
@@ -152,7 +175,7 @@ dist/releases/<VERSION>/
   SHA256SUMS
 ```
 
-每个压缩包内包含 `supervisor-panel` 二进制和 `upgrade.sh`，安装脚本会把升级脚本写入 `/opt/supervisor-panel/upgrade.sh`。
+每个压缩包内包含 `supervisor-panel` 二进制、`upgrade.sh` 和 `uninstall.sh`，安装脚本会把升级脚本写入 `/opt/supervisor-panel/upgrade.sh`，把卸载脚本写入 `/opt/supervisor-panel/uninstall.sh`。
 
 如果使用自定义下载源，可将 `dist/releases/<VERSION>/` 同步到下载服务器的 `/releases/<VERSION>/`，安装脚本即可按架构自动下载。
 
