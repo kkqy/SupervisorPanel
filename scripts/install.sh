@@ -178,6 +178,9 @@ if [[ ! -f "${TMP_DIR}/supervisor-panel" ]]; then
 fi
 install -m 755 "${TMP_DIR}/supervisor-panel" "${BIN_PATH}"
 chmod 755 "${BIN_PATH}"
+if [[ -f "${TMP_DIR}/upgrade.sh" ]]; then
+  install -m 755 "${TMP_DIR}/upgrade.sh" "${INSTALL_DIR}/upgrade.sh"
+fi
 
 echo "[4/7] 写入环境配置..."
 cat > "${ENV_FILE}" <<EOF
@@ -191,6 +194,7 @@ SP_SESSION_TTL_HOURS=24
 SP_SESSION_COOKIE_NAME=sp_session
 SP_SESSION_SECURE=false
 SP_RUNTIME_USER=www-data
+SP_UPDATE_SCRIPT_PATH=${INSTALL_DIR}/upgrade.sh
 EOF
 chmod 600 "${ENV_FILE}"
 

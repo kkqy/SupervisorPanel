@@ -7,30 +7,43 @@ import (
 )
 
 type Config struct {
-	Addr              string
-	DBPath            string
-	ProjectsDir       string
-	SupervisorConfDir string
-	SupervisorctlBin  string
-	SystemctlBin      string
-	SessionTTLHours   int
-	SessionCookieName string
-	SessionSecure     bool
-	RuntimeUser       string
+	Addr                     string
+	DBPath                   string
+	ProjectsDir              string
+	SupervisorConfDir        string
+	SupervisorctlBin         string
+	SystemctlBin             string
+	SessionTTLHours          int
+	SessionCookieName        string
+	SessionSecure            bool
+	RuntimeUser              string
+	CurrentVersion           string
+	UpdateCheckEnabled       bool
+	UpdateCheckIntervalHours int
+	UpdateGitHubRepo         string
+	UpdateGitHubAPIBase      string
+	UpdateDownloadBaseURL    string
+	UpdateScriptPath         string
 }
 
 func Load() Config {
 	return Config{
-		Addr:              getEnv("SP_ADDR", ":8080"),
-		DBPath:            getEnv("SP_DB_PATH", "./data/supervisor-panel.db"),
-		ProjectsDir:       getEnv("SP_PROJECTS_DIR", "./projects"),
-		SupervisorConfDir: getEnv("SP_SUPERVISOR_CONF_DIR", "/etc/supervisor/conf.d"),
-		SupervisorctlBin:  getEnv("SP_SUPERVISORCTL_BIN", "/usr/bin/supervisorctl"),
-		SystemctlBin:      getEnv("SP_SYSTEMCTL_BIN", "/usr/bin/systemctl"),
-		SessionTTLHours:   getEnvInt("SP_SESSION_TTL_HOURS", 24),
-		SessionCookieName: getEnv("SP_SESSION_COOKIE_NAME", "sp_session"),
-		SessionSecure:     getEnvBool("SP_SESSION_SECURE", false),
-		RuntimeUser:       getEnv("SP_RUNTIME_USER", "www-data"),
+		Addr:                     getEnv("SP_ADDR", ":8080"),
+		DBPath:                   getEnv("SP_DB_PATH", "./data/supervisor-panel.db"),
+		ProjectsDir:              getEnv("SP_PROJECTS_DIR", "./projects"),
+		SupervisorConfDir:        getEnv("SP_SUPERVISOR_CONF_DIR", "/etc/supervisor/conf.d"),
+		SupervisorctlBin:         getEnv("SP_SUPERVISORCTL_BIN", "/usr/bin/supervisorctl"),
+		SystemctlBin:             getEnv("SP_SYSTEMCTL_BIN", "/usr/bin/systemctl"),
+		SessionTTLHours:          getEnvInt("SP_SESSION_TTL_HOURS", 24),
+		SessionCookieName:        getEnv("SP_SESSION_COOKIE_NAME", "sp_session"),
+		SessionSecure:            getEnvBool("SP_SESSION_SECURE", false),
+		RuntimeUser:              getEnv("SP_RUNTIME_USER", "www-data"),
+		UpdateCheckEnabled:       getEnvBool("SP_UPDATE_CHECK_ENABLED", true),
+		UpdateCheckIntervalHours: getEnvInt("SP_UPDATE_CHECK_INTERVAL_HOURS", 6),
+		UpdateGitHubRepo:         getEnv("SP_UPDATE_GITHUB_REPO", "kkqy/SupervisorPanel"),
+		UpdateGitHubAPIBase:      getEnv("SP_UPDATE_GITHUB_API_BASE", "https://api.github.com"),
+		UpdateDownloadBaseURL:    getEnv("SP_UPDATE_DOWNLOAD_BASE_URL", ""),
+		UpdateScriptPath:         getEnv("SP_UPDATE_SCRIPT_PATH", "/opt/supervisor-panel/upgrade.sh"),
 	}
 }
 

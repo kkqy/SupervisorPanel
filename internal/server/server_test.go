@@ -15,12 +15,22 @@ import (
 	"supervisorpanel/internal/db"
 	"supervisorpanel/internal/monitor"
 	"supervisorpanel/internal/systemctl"
+	"supervisorpanel/internal/update"
 )
 
 type fakeMonitorCollector struct {
 	system    monitor.SystemSnapshot
 	systemErr error
 	processes map[string]monitor.ProcessSnapshot
+}
+
+type fakeUpdateService struct {
+	status        update.Status
+	checkStatus   update.Status
+	upgradeStatus update.Status
+	upgradeErr    error
+	checked       bool
+	upgraded      bool
 }
 
 func (f fakeMonitorCollector) SystemSnapshot(path string) (monitor.SystemSnapshot, error) {
@@ -30,6 +40,22 @@ func (f fakeMonitorCollector) SystemSnapshot(path string) (monitor.SystemSnapsho
 func (f fakeMonitorCollector) ProcessSnapshots(projects []db.Project) map[string]monitor.ProcessSnapshot {
 	return f.processes
 }
+
+func (f *fakeUpdateService) Status() update.Status {
+	return f.status
+}
+
+func (f *fakeUpdateService) Check(ctx context.Context) update.Status {
+	f.checked = true
+	return f.checkStatus
+}
+
+func (f *fakeUpdateService) StartUpgrade(ctx context.Context) (update.Status, error) {
+	f.upgraded = true
+	return f.upgradeStatus, f.upgradeErr
+}
+
+func (f *fakeUpdateService) Start(ctx context.Context) {}
 
 func newTestStore(t *testing.T) *db.Store {
 	t.Helper()
@@ -137,6 +163,80 @@ func TestHandleAPIRestartSupervisorReturnsBeforeCommandCompletes(t *testing.T) {
 		t.Fatal("handler did not start supervisor restart command")
 	}
 	close(release)
+}
+
+func TestHandleAPIUpdateStatus(t *testing.T) {
+	s := &Server{
+		update: &fakeUpdateService{
+			status: update.Status{
+				Enabled:         true,
+				CurrentVersion:  "v1.0.0",
+				LatestVersion:   "v1.1.0",
+				UpdateAvailable: true,
+			},
+		},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/system/update", nil)
+	rr := httptest.NewRecorder()
+
+	s.handleAPIUpdateStatus(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `"current_version":"v1.0.0"`) || !strings.Contains(body, `"update_available":true`) {
+		t.Fatalf("body = %q, want update status", body)
+	}
+}
+
+func TestHandleAPIUpdateCheckTriggersManualCheck(t *testing.T) {
+	fake := &fakeUpdateService{
+		checkStatus: update.Status{
+			Enabled:        true,
+			CurrentVersion: "v1.0.0",
+			LatestVersion:  "v1.0.0",
+		},
+	}
+	s := &Server{update: fake}
+	req := httptest.NewRequest(http.MethodPost, "/api/system/update/check", nil)
+	rr := httptest.NewRecorder()
+
+	s.handleAPIUpdateCheck(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if !fake.checked {
+		t.Fatal("manual check was not triggered")
+	}
+}
+
+func TestHandleAPIUpdateUpgradeSubmitsUpgrade(t *testing.T) {
+	fake := &fakeUpdateService{
+		upgradeStatus: update.Status{
+			Enabled:         true,
+			CurrentVersion:  "v1.0.0",
+			LatestVersion:   "v1.1.0",
+			UpdateAvailable: true,
+			Upgrading:       true,
+		},
+	}
+	s := &Server{update: fake}
+	req := httptest.NewRequest(http.MethodPost, "/api/system/update/upgrade", nil)
+	rr := httptest.NewRecorder()
+
+	s.handleAPIUpdateUpgrade(rr, req)
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusAccepted)
+	}
+	if !fake.upgraded {
+		t.Fatal("upgrade was not submitted")
+	}
+	if !strings.Contains(rr.Body.String(), "已提交升级任务") {
+		t.Fatalf("body = %q, want submitted message", rr.Body.String())
+	}
 }
 
 func TestListProjectDirEntriesIncludesFileMetadata(t *testing.T) {

@@ -104,15 +104,17 @@ for raw_target in "${target_items[@]}"; do
   echo "编译 ${goos}/${goarch}${variant:+/v${variant}}..."
   if [[ "${goarch}" == "arm" ]]; then
     CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" GOARM="${variant}" \
-      go build -trimpath -ldflags "-s -w" -o "${build_dir}/supervisor-panel" ./cmd/supervisor-panel
+      go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "${build_dir}/supervisor-panel" ./cmd/supervisor-panel
   else
     CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
-      go build -trimpath -ldflags "-s -w" -o "${build_dir}/supervisor-panel" ./cmd/supervisor-panel
+      go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "${build_dir}/supervisor-panel" ./cmd/supervisor-panel
   fi
+  cp "${ROOT_DIR}/scripts/upgrade.sh" "${build_dir}/upgrade.sh"
+  chmod 755 "${build_dir}/upgrade.sh"
 
   artifact_arch="$(artifact_arch_name "${goarch}")"
   package_name="supervisor-panel_${VERSION}_${goos}_${artifact_arch}.tar.gz"
-  tar -C "${build_dir}" -czf "${RELEASE_DIR}/${package_name}" supervisor-panel
+  tar -C "${build_dir}" -czf "${RELEASE_DIR}/${package_name}" supervisor-panel upgrade.sh
 done
 
 (

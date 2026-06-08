@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"net/http"
@@ -16,6 +17,8 @@ import (
 	"supervisorpanel/internal/supervisor"
 )
 
+var version = "dev"
+
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	if len(os.Args) > 1 && os.Args[1] == "init-admin" {
@@ -27,6 +30,7 @@ func main() {
 
 func serveCmd() {
 	cfg := config.Load()
+	cfg.CurrentVersion = version
 	if err := os.MkdirAll(cfg.ProjectsDir, 0o755); err != nil {
 		log.Fatalf("create projects dir failed: %v", err)
 	}
@@ -46,6 +50,9 @@ func serveCmd() {
 	if err != nil {
 		log.Fatalf("init server failed: %v", err)
 	}
+	rootCtx, stopBackground := context.WithCancel(context.Background())
+	defer stopBackground()
+	srv.StartUpdateChecker(rootCtx)
 
 	httpServer := &http.Server{
 		Addr:         cfg.Addr,
@@ -65,6 +72,7 @@ func serveCmd() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 	<-quit
+	stopBackground()
 	_ = httpServer.Close()
 }
 
@@ -85,6 +93,7 @@ func initAdminCmd(args []string) {
 	defer store.Close()
 
 	cfg := config.Load()
+	cfg.CurrentVersion = version
 	srv, err := server.New(cfg, store, supervisor.New(cfg.SupervisorConfDir, cfg.SupervisorctlBin))
 	if err != nil {
 		log.Fatalf("init server failed: %v", err)

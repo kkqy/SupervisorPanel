@@ -16,6 +16,7 @@ SupervisorPanel 是一个基于 Go + SQLite3 的 Supervisor Web 管理面板。
 - 支持项目复制（可选是否复制符号链接，复制后默认未启动）
 - 项目文件支持资源管理器式浏览，并可在当前目录新建文件夹/文件
 - 项目文件列表支持单文件下载
+- 后台自动检测新版本，发现更新后支持管理员一键提交升级
 
 ## 技术栈
 
@@ -56,6 +57,11 @@ go build ./cmd/supervisor-panel
 - `SP_SUPERVISORCTL_BIN=/usr/bin/supervisorctl`
 - `SP_SYSTEMCTL_BIN=/usr/bin/systemctl`
 - `SP_RUNTIME_USER=www-data`
+- `SP_UPDATE_CHECK_ENABLED=true`
+- `SP_UPDATE_CHECK_INTERVAL_HOURS=6`
+- `SP_UPDATE_GITHUB_REPO=kkqy/SupervisorPanel`
+- `SP_UPDATE_DOWNLOAD_BASE_URL=`（可选，自定义升级包下载源）
+- `SP_UPDATE_SCRIPT_PATH=/opt/supervisor-panel/upgrade.sh`
 
 首次创建管理员：
 
@@ -113,15 +119,18 @@ bash /tmp/supervisorpanel-upgrade.sh
 
 1. 按当前系统架构下载对应升级包（`x86/x64/arm/arm64`）
 2. 覆盖安装 `/usr/local/bin/supervisor-panel` 并重启 `supervisor-panel` 服务
-3. 保留现有 `/etc/supervisor-panel/config.env` 配置
-4. 不重新初始化管理员，不修改已有账号密码
-5. 若重启失败自动回滚到旧版本二进制
+3. 同步更新 `/opt/supervisor-panel/upgrade.sh`，供后台一键升级复用
+4. 保留现有 `/etc/supervisor-panel/config.env` 配置
+5. 不重新初始化管理员，不修改已有账号密码
+6. 若重启失败自动回滚到旧版本二进制
 
 可用环境变量与安装脚本一致：
 
 - `RELEASE_VERSION`：版本号（默认 `latest`），例如 `v1.0.0`
 - `GITHUB_REPO`：GitHub 仓库路径（默认 `kkqy/SupervisorPanel`）
 - `DOWNLOAD_BASE_URL`：可选，自定义下载源地址
+
+后台一键升级会复用同一个升级脚本。发现新版本后，管理员可在页面顶部“更新”入口提交升级任务；服务会异步执行脚本并自动重启。
 
 ## 发布打包（单机多架构交叉编译）
 
@@ -146,6 +155,8 @@ dist/releases/<VERSION>/
   supervisor-panel_<VERSION>_linux_arm64.tar.gz
   SHA256SUMS
 ```
+
+每个压缩包内包含 `supervisor-panel` 二进制和 `upgrade.sh`，安装脚本会把升级脚本写入 `/opt/supervisor-panel/upgrade.sh`。
 
 如果使用自定义下载源，可将 `dist/releases/<VERSION>/` 同步到下载服务器的 `/releases/<VERSION>/`，安装脚本即可按架构自动下载。
 

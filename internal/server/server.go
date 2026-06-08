@@ -30,6 +30,7 @@ import (
 	"supervisorpanel/internal/monitor"
 	"supervisorpanel/internal/supervisor"
 	"supervisorpanel/internal/systemctl"
+	"supervisorpanel/internal/update"
 )
 
 //go:embed static/* static/assets/*
@@ -41,11 +42,19 @@ type Server struct {
 	sup       *supervisor.Client
 	monitor   monitorCollector
 	systemctl systemctl.Client
+	update    updateService
 }
 
 type monitorCollector interface {
 	SystemSnapshot(path string) (monitor.SystemSnapshot, error)
 	ProcessSnapshots(projects []db.Project) map[string]monitor.ProcessSnapshot
+}
+
+type updateService interface {
+	Status() update.Status
+	Check(context.Context) update.Status
+	StartUpgrade(context.Context) (update.Status, error)
+	Start(context.Context)
 }
 
 type ProjectDirEntry struct {
@@ -102,7 +111,30 @@ const maxEditableFileSize = 1 << 20
 
 func New(cfg config.Config, store *db.Store, sup *supervisor.Client) (*Server, error) {
 	_ = mime.AddExtensionType(".js", "text/javascript; charset=utf-8")
-	return &Server{cfg: cfg, store: store, sup: sup, monitor: monitor.New(sup), systemctl: systemctl.Client{Bin: cfg.SystemctlBin}}, nil
+	updateSvc := update.New(update.Config{
+		Enabled:         cfg.UpdateCheckEnabled,
+		CurrentVersion:  cfg.CurrentVersion,
+		GitHubRepo:      cfg.UpdateGitHubRepo,
+		GitHubAPIBase:   cfg.UpdateGitHubAPIBase,
+		DownloadBaseURL: cfg.UpdateDownloadBaseURL,
+		ScriptPath:      cfg.UpdateScriptPath,
+		CheckInterval:   time.Duration(cfg.UpdateCheckIntervalHours) * time.Hour,
+	})
+	return &Server{
+		cfg:       cfg,
+		store:     store,
+		sup:       sup,
+		monitor:   monitor.New(sup),
+		systemctl: systemctl.Client{Bin: cfg.SystemctlBin},
+		update:    updateSvc,
+	}, nil
+}
+
+func (s *Server) StartUpdateChecker(ctx context.Context) {
+	if s.update == nil {
+		return
+	}
+	s.update.Start(ctx)
 }
 
 func (s *Server) Routes() http.Handler {
@@ -334,6 +366,18 @@ func (s *Server) handleAPIRoute(w http.ResponseWriter, r *http.Request) {
 		s.handleAPISystemStatus(w, r)
 		return
 	}
+	if path == "system/update" {
+		s.handleAPIUpdateStatus(w, r)
+		return
+	}
+	if path == "system/update/check" {
+		s.handleAPIUpdateCheck(w, r)
+		return
+	}
+	if path == "system/update/upgrade" {
+		s.handleAPIUpdateUpgrade(w, r)
+		return
+	}
 	if path == "projects/process-statuses" {
 		s.handleAPIProjectProcessStatuses(w, r)
 		return
@@ -454,6 +498,47 @@ func (s *Server) handleAPIProjectProcessStatuses(w http.ResponseWriter, r *http.
 		collector = monitor.New(s.sup)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "processes": collector.ProcessSnapshots(projects)})
+}
+
+func (s *Server) handleAPIUpdateStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	if s.update == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "update": update.Status{Enabled: false, Error: "更新检测不可用"}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "update": s.update.Status()})
+}
+
+func (s *Server) handleAPIUpdateCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+	if s.update == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "更新检测不可用"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "update": s.update.Check(r.Context())})
+}
+
+func (s *Server) handleAPIUpdateUpgrade(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+	if s.update == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "更新升级不可用"})
+		return
+	}
+	status, err := s.update.StartUpgrade(context.Background())
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": err.Error(), "update": status})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "已提交升级任务", "update": status})
 }
 
 func (s *Server) handleAPIRestartSupervisor(w http.ResponseWriter, r *http.Request) {

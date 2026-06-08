@@ -90,6 +90,29 @@ export interface SystemStatusResponse extends ApiEnvelope {
   system: SystemSnapshot
 }
 
+export interface UpdateStatus {
+  enabled: boolean
+  current_version: string
+  latest_version: string
+  update_available: boolean
+  release_url: string
+  checked_at?: string
+  error: string
+  checking: boolean
+  upgrading: boolean
+  upgrade_message: string
+  upgrade_started_at?: string
+  upgrade_finished_at?: string
+}
+
+export interface UpdateStatusResponse extends ApiEnvelope {
+  update: UpdateStatus
+}
+
+export interface UpdateActionResponse extends ApiEnvelope {
+  update: UpdateStatus
+}
+
 export interface ProcessSnapshot {
   status: string
   status_text: string
