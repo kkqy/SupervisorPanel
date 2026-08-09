@@ -61,6 +61,7 @@ type ProjectDirEntry struct {
 	Name       string
 	Path       string
 	IsDir      bool
+	Executable bool
 	Editable   bool
 	IsCurrent  bool
 	Size       int64
@@ -91,6 +92,7 @@ type apiDirEntry struct {
 	Name       string    `json:"name"`
 	Path       string    `json:"path"`
 	IsDir      bool      `json:"is_dir"`
+	Executable bool      `json:"executable"`
 	Editable   bool      `json:"editable"`
 	IsCurrent  bool      `json:"is_current"`
 	Size       int64     `json:"size"`
@@ -749,6 +751,7 @@ func apiEntriesPayload(entries []ProjectDirEntry) []apiDirEntry {
 			Name:       entry.Name,
 			Path:       entry.Path,
 			IsDir:      entry.IsDir,
+			Executable: entry.Executable,
 			Editable:   entry.Editable,
 			IsCurrent:  entry.IsCurrent,
 			Size:       entry.Size,
@@ -820,6 +823,8 @@ func (s *Server) handleProjectRoute(w http.ResponseWriter, r *http.Request) {
 		s.handleRenameEntry(w, r, projectID)
 	case "delete-file":
 		s.handleDeleteFile(w, r, projectID)
+	case "executable":
+		s.handleSetExecutable(w, r, projectID)
 	case "delete-dir":
 		s.handleDeleteDir(w, r, projectID)
 	case "download":
@@ -1342,6 +1347,57 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, projec
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "文件已删除"})
+}
+
+func (s *Server) handleSetExecutable(w http.ResponseWriter, r *http.Request, projectID int64) {
+	if r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+	if !requireAJAX(w, r) {
+		return
+	}
+	project, err := s.store.GetProjectByID(projectID)
+	if err != nil || project == nil {
+		http.NotFound(w, r)
+		return
+	}
+	var req struct {
+		RelPath    string `json:"rel_path"`
+		Executable bool   `json:"executable"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请求参数错误"})
+		return
+	}
+	relPath := normalizeUploadRelPath(req.RelPath)
+	if relPath == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "文件路径不合法"})
+		return
+	}
+	targetPath, err := safeJoin(project.Path, relPath)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "文件路径不合法"})
+		return
+	}
+	info, err := os.Lstat(targetPath)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "文件不存在或无权限访问：" + err.Error()})
+		return
+	}
+	if !info.Mode().IsRegular() {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "仅支持设置普通文件的执行权限"})
+		return
+	}
+	if err := setExecutable(targetPath, info.Mode(), req.Executable); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "设置执行权限失败：" + err.Error()})
+		return
+	}
+	message := "已设为可执行"
+	if !req.Executable {
+		message = "已取消可执行"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": message, "executable": req.Executable})
 }
 
 func (s *Server) handleCreateDir(w http.ResponseWriter, r *http.Request, projectID int64) {
@@ -1950,6 +2006,7 @@ func listProjectDirEntries(projectRoot, currentDir, currentEntry string) ([]Proj
 			Name:       name,
 			Path:       relPath,
 			IsDir:      ent.IsDir(),
+			Executable: !ent.IsDir() && info.Mode().Perm()&0o111 != 0,
 			Editable:   !ent.IsDir() && isEditableTextFile(relPath),
 			IsCurrent:  !ent.IsDir() && relPath == currentEntry,
 			Size:       info.Size(),
@@ -2246,6 +2303,22 @@ func ensureExecutable(path string, mode os.FileMode) error {
 		return nil
 	}
 	targetMode := mode | 0o111
+	if targetMode == mode {
+		return nil
+	}
+	return os.Chmod(path, targetMode)
+}
+
+func setExecutable(path string, mode os.FileMode, executable bool) error {
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("当前系统不支持设置执行权限")
+	}
+	targetMode := mode
+	if executable {
+		targetMode |= 0o111
+	} else {
+		targetMode &^= 0o111
+	}
 	if targetMode == mode {
 		return nil
 	}

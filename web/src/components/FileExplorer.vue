@@ -38,11 +38,12 @@
       <el-table-column label="路径" min-width="260">
         <template #default="{ row }"><span class="muted mono">{{ row.path }}</span></template>
       </el-table-column>
-      <el-table-column label="操作" width="430" fixed="right">
+      <el-table-column label="操作" width="540" fixed="right">
         <template #default="{ row }">
           <div class="toolbar">
             <el-button v-if="row.is_dir" size="small" type="primary" plain :disabled="isBusy()" @click="emit('enter-dir', row.path)">进入</el-button>
             <el-button v-if="!row.is_dir && !row.is_current" size="small" :loading="isBusy('set-entry', row.path)" :disabled="isBusy() && !isBusy('set-entry', row.path)" @click="emit('set-entry', row.path)">设为主程序</el-button>
+            <el-button v-if="!row.is_dir" size="small" :loading="isBusy('set-executable', row.path)" :disabled="isBusy() && !isBusy('set-executable', row.path)" @click="emit('set-executable', row)">{{ row.executable ? '取消可执行' : '设为可执行' }}</el-button>
             <el-button v-if="!row.is_dir && row.editable" size="small" :disabled="isBusy()" @click="emit('edit-file', row.path)">编辑</el-button>
             <el-button size="small" :loading="isBusy('rename', row.path)" :disabled="isBusy() && !isBusy('rename', row.path)" @click="openRename(row)">重命名</el-button>
             <el-button v-if="!row.is_dir" size="small" tag="a" :href="downloadURL(projectId, row.path, currentDir)" :disabled="isBusy()">下载</el-button>
@@ -105,6 +106,7 @@ const emit = defineEmits<{
   rename: [path: string, name: string, done?: () => void]
   delete: [entry: DirEntry]
   'set-entry': [path: string]
+  'set-executable': [entry: DirEntry]
   'edit-file': [path: string]
 }>()
 

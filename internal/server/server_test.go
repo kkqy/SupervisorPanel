@@ -271,4 +271,40 @@ func TestListProjectDirEntriesIncludesFileMetadata(t *testing.T) {
 	if entry.Owner == "" {
 		t.Fatal("Owner is empty")
 	}
+	if entry.Executable {
+		t.Fatal("Executable = true, want false")
+	}
+}
+
+func TestSetExecutableUpdatesFileMode(t *testing.T) {
+	filePath := filepath.Join(t.TempDir(), "helper")
+	if err := os.WriteFile(filePath, []byte("helper"), 0o640); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	info, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("stat file: %v", err)
+	}
+	if err := setExecutable(filePath, info.Mode(), true); err != nil {
+		t.Fatalf("set executable: %v", err)
+	}
+	info, err = os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("stat executable file: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o751 {
+		t.Fatalf("mode after enable = %o, want 751", got)
+	}
+
+	if err := setExecutable(filePath, info.Mode(), false); err != nil {
+		t.Fatalf("unset executable: %v", err)
+	}
+	info, err = os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("stat non-executable file: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o640 {
+		t.Fatalf("mode after disable = %o, want 640", got)
+	}
 }

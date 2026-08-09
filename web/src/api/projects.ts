@@ -110,6 +110,13 @@ export function deleteFile(projectID: number, relPath: string) {
   })
 }
 
+export function setFileExecutable(projectID: number, relPath: string, executable: boolean) {
+  return request<ActionResponse>(`/projects/${projectID}/executable`, {
+    method: 'POST',
+    json: { rel_path: relPath, executable },
+  })
+}
+
 export function deleteDir(projectID: number, relPath: string) {
   return request<ActionResponse>(`/projects/${projectID}/delete-dir`, {
     method: 'POST',

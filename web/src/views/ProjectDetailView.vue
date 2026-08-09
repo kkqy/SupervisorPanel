@@ -84,6 +84,7 @@
       @rename="handleRename"
       @delete="handleDeleteEntry"
       @set-entry="setEntry"
+      @set-executable="handleSetExecutable"
       @edit-file="editFile"
     />
 
@@ -114,6 +115,7 @@ import {
   projectAction,
   renameEntry,
   saveProjectConfig,
+  setFileExecutable,
   uploadProjectFiles,
 } from '@/api/projects'
 import { errorMessage } from '@/api/http'
@@ -264,6 +266,14 @@ async function handleDeleteEntry(entry: DirEntry) {
     () => (entry.is_dir ? deleteDir(projectID, entry.path) : deleteFile(projectID, entry.path)),
     '删除失败',
     { action: 'delete', path: entry.path },
+  )
+}
+
+async function handleSetExecutable(entry: DirEntry) {
+  await runExplorerTask(
+    () => setFileExecutable(projectID, entry.path, !entry.executable),
+    '设置执行权限失败',
+    { action: 'set-executable', path: entry.path },
   )
 }
 

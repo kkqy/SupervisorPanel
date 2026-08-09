@@ -26,6 +26,7 @@ export interface DirEntry {
   name: string
   path: string
   is_dir: boolean
+  executable: boolean
   editable: boolean
   is_current: boolean
   size: number
