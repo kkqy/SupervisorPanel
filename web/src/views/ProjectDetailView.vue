@@ -30,7 +30,17 @@
         </div>
         <div class="resource-item">
           <span class="muted">端口</span>
-          <span class="mono">{{ formatPorts(processStatus?.listen_ports) }}</span>
+          <div v-if="processStatus?.listen_ports?.length" class="port-links">
+            <el-button
+              v-for="port in processStatus.listen_ports"
+              :key="port"
+              type="primary"
+              link
+              class="mono"
+              @click="openBindDialog(port)"
+            >{{ port }}</el-button>
+          </div>
+          <span v-else class="mono">-</span>
         </div>
         <div class="resource-item">
           <span class="muted">连接数</span>
@@ -38,6 +48,29 @@
         </div>
       </div>
       <p v-if="processStatus?.message" class="muted">{{ processStatus.message }}</p>
+    </el-card>
+
+    <el-card v-loading="loadingBindings" shadow="never">
+      <template #header>域名绑定</template>
+      <el-table :data="bindings" empty-text="暂无绑定；进程启动后点击上方端口即可绑定域名">
+        <el-table-column label="域名" min-width="220">
+          <template #default="scope">
+            <a :href="`https://${scope.row.domain}`" target="_blank" rel="noopener noreferrer">{{ scope.row.domain }}</a>
+          </template>
+        </el-table-column>
+        <el-table-column prop="port" label="进程端口" width="120" />
+        <el-table-column prop="created_at" label="绑定时间" min-width="170" />
+        <el-table-column label="操作" width="100" align="right">
+          <template #default="scope">
+            <el-button
+              type="danger"
+              link
+              :loading="deletingBindingID === scope.row.id"
+              @click="confirmDeleteBinding(scope.row)"
+            >删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
     </el-card>
 
     <div class="card-grid">
@@ -60,7 +93,7 @@
             <el-input v-model.trim="config.runUser" />
           </el-form-item>
           <div class="toolbar">
-            <el-button type="primary" :loading="savingConfig" @click="saveConfig">保存参数和运行用户</el-button>
+            <el-button type="primary" :loading="savingConfig" @click="saveConfig">保存运行配置</el-button>
             <el-button type="success" :loading="runningAction === 'start'" :disabled="!!runningAction && runningAction !== 'start'" @click="runAction('start')">启动</el-button>
             <el-button :loading="runningAction === 'restart'" :disabled="!!runningAction && runningAction !== 'restart'" @click="runAction('restart')">重启</el-button>
             <el-button type="warning" plain :loading="runningAction === 'stop'" :disabled="!!runningAction && runningAction !== 'stop'" @click="runAction('stop')">停止</el-button>
@@ -88,6 +121,21 @@
       @edit-file="editFile"
     />
 
+    <el-dialog v-model="bindDialog.visible" title="绑定域名" width="460px" @closed="bindDialog.domain = ''">
+      <el-form label-position="top" @submit.prevent>
+        <el-form-item label="进程端口">
+          <el-input :model-value="String(bindDialog.port)" readonly />
+        </el-form-item>
+        <el-form-item label="访问域名">
+          <el-input v-model.trim="bindDialog.domain" placeholder="例如：app.example.com" @keyup.enter="submitBinding" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="bindDialog.visible = false">取消</el-button>
+        <el-button type="primary" :loading="bindDialog.submitting" @click="submitBinding">确认绑定</el-button>
+      </template>
+    </el-dialog>
+
     <el-card class="danger-card" shadow="never">
       <template #header>危险操作</template>
       <p class="muted">删除项目会清理项目目录、数据库记录和 Supervisor 配置，无法恢复。</p>
@@ -107,11 +155,14 @@ import UploadDropzone from '@/components/UploadDropzone.vue'
 import {
   createDir,
   createFile,
+  createProxyBinding,
   deleteDir,
   deleteFile,
   deleteProject,
+  deleteProxyBinding,
   getProject,
   getProjectProcessStatuses,
+  getProxyBindings,
   projectAction,
   renameEntry,
   saveProjectConfig,
@@ -120,7 +171,7 @@ import {
 } from '@/api/projects'
 import { errorMessage } from '@/api/http'
 import type { UploadProgress } from '@/api/http'
-import type { DirEntry, ProcessSnapshot, ProjectDetailResponse } from '@/types/api'
+import type { DirEntry, ProcessSnapshot, ProjectDetailResponse, ProxyBinding } from '@/types/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -136,7 +187,11 @@ const explorerBusy = ref<{ action: string; path?: string } | null>(null)
 const detail = ref<ProjectDetailResponse>()
 const processStatus = ref<ProcessSnapshot>()
 const loadingProcessStatus = ref(false)
+const loadingBindings = ref(false)
+const deletingBindingID = ref(0)
+const bindings = ref<ProxyBinding[]>([])
 const config = reactive({ entryFile: '', args: '', runUser: '' })
+const bindDialog = reactive({ visible: false, port: 0, domain: '', submitting: false })
 
 onMounted(() => {
   void loadDetail()
@@ -157,10 +212,66 @@ async function loadDetail() {
     config.args = result.current_args
     config.runUser = result.project.run_user
     void loadProcessStatus()
+    void loadBindings()
   } catch (error) {
     ElMessage.error(errorMessage(error, '加载项目失败'))
   } finally {
     loading.value = false
+  }
+}
+
+async function loadBindings() {
+  loadingBindings.value = true
+  try {
+    const result = await getProxyBindings(projectID)
+    bindings.value = result.bindings
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '加载域名绑定失败'))
+  } finally {
+    loadingBindings.value = false
+  }
+}
+
+function openBindDialog(port: number) {
+  bindDialog.port = port
+  bindDialog.domain = ''
+  bindDialog.visible = true
+}
+
+async function submitBinding() {
+  if (bindDialog.submitting) return
+  if (!bindDialog.domain.trim()) {
+    ElMessage.error('请输入域名')
+    return
+  }
+  bindDialog.submitting = true
+  try {
+    const result = await createProxyBinding(projectID, bindDialog.domain, bindDialog.port)
+    ElMessage.success(result.message || '域名绑定成功')
+    bindDialog.visible = false
+    await loadBindings()
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '域名绑定失败'))
+  } finally {
+    bindDialog.submitting = false
+  }
+}
+
+async function confirmDeleteBinding(binding: ProxyBinding) {
+  await ElMessageBox.confirm(`确认删除 ${binding.domain} → 127.0.0.1:${binding.port} 的绑定吗？`, '删除域名绑定', {
+    confirmButtonText: '删除',
+    cancelButtonText: '取消',
+    type: 'warning',
+  })
+  deletingBindingID.value = binding.id
+  try {
+    const result = await deleteProxyBinding(projectID, binding.id)
+    ElMessage.success(result.message || '域名绑定已删除')
+    await loadBindings()
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '删除域名绑定失败'))
+  } finally {
+    deletingBindingID.value = 0
   }
 }
 
@@ -343,9 +454,6 @@ function formatBytes(value?: number) {
   return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
 }
 
-function formatPorts(ports?: number[]) {
-  return ports?.length ? ports.join(', ') : '-'
-}
 </script>
 
 <style scoped>
@@ -359,6 +467,17 @@ function formatPorts(ports?: number[]) {
   display: grid;
   gap: 4px;
   min-width: 0;
+}
+
+.port-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.port-links .el-button {
+  margin: 0;
+  padding: 0;
 }
 
 .resource-item span:last-child {

@@ -24,6 +24,8 @@ type Config struct {
 	UpdateGitHubAPIBase      string
 	UpdateDownloadBaseURL    string
 	UpdateScriptPath         string
+	CaddyEnabled             bool
+	CaddyDataDir             string
 }
 
 func Load() Config {
@@ -44,6 +46,8 @@ func Load() Config {
 		UpdateGitHubAPIBase:      getEnv("SP_UPDATE_GITHUB_API_BASE", "https://api.github.com"),
 		UpdateDownloadBaseURL:    getEnv("SP_UPDATE_DOWNLOAD_BASE_URL", ""),
 		UpdateScriptPath:         getEnv("SP_UPDATE_SCRIPT_PATH", "/opt/supervisor-panel/upgrade.sh"),
+		CaddyEnabled:             getEnvBool("SP_CADDY_ENABLED", true),
+		CaddyDataDir:             getEnv("SP_CADDY_DATA_DIR", "./data/caddy"),
 	}
 }
 

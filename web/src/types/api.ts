@@ -131,9 +131,22 @@ export interface ProcessStatusesResponse extends ApiEnvelope {
   processes: Record<string, ProcessSnapshot>
 }
 
+export interface ProxyBinding {
+  id: number
+  project_id: number
+  domain: string
+  port: number
+  created_at: string
+}
+
+export interface ProxyBindingsResponse extends ApiEnvelope {
+  bindings: ProxyBinding[]
+}
+
 export interface ActionResponse extends ApiEnvelope {
   status?: string
   project_id?: number
+  binding_id?: number
   current_entry?: string
   mtime_nano?: string
   count?: number

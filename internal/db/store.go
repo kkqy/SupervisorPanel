@@ -33,6 +33,14 @@ type Project struct {
 	UpdatedAt string
 }
 
+type ProxyBinding struct {
+	ID        int64  `json:"id"`
+	ProjectID int64  `json:"project_id"`
+	Domain    string `json:"domain"`
+	Port      int    `json:"port"`
+	CreatedAt string `json:"created_at"`
+}
+
 type Session struct {
 	Token     string
 	AdminID   int64
@@ -90,11 +98,77 @@ CREATE TABLE IF NOT EXISTS projects (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS proxy_bindings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  domain TEXT NOT NULL UNIQUE,
+  port INTEGER NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_projects_slug ON projects(slug);
 CREATE INDEX IF NOT EXISTS idx_sessions_admin_id ON sessions(admin_id);
+CREATE INDEX IF NOT EXISTS idx_proxy_bindings_project_id ON proxy_bindings(project_id);
 `
-	_, err := s.DB.Exec(schema)
+	if _, err := s.DB.Exec(schema); err != nil {
+		return err
+	}
+	if err := s.migrateLegacyProxyBindings(); err != nil {
+		return err
+	}
+	_, err := s.DB.Exec(`DROP INDEX IF EXISTS idx_projects_domain`)
 	return err
+}
+
+func (s *Store) migrateLegacyProxyBindings() error {
+	hasDomain, err := s.hasProjectColumn("domain")
+	if err != nil || !hasDomain {
+		return err
+	}
+	hasPort, err := s.hasProjectColumn("proxy_port")
+	if err != nil || !hasPort {
+		return err
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`
+INSERT OR IGNORE INTO proxy_bindings(project_id, domain, port)
+SELECT id, domain, proxy_port FROM projects
+WHERE domain IS NOT NULL AND domain <> '' AND proxy_port > 0
+`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE projects SET domain = NULL, proxy_port = 0 WHERE domain IS NOT NULL OR proxy_port <> 0`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) hasProjectColumn(name string) (bool, error) {
+	rows, err := s.DB.Query(`PRAGMA table_info(projects)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var columnName, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &columnName, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false, err
+		}
+		if columnName == name {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 func (s *Store) CleanupExpiredSessions() error {
@@ -253,7 +327,78 @@ func (s *Store) UpdateProjectConfig(projectID int64, entryFile, args, runUser st
 	return err
 }
 
-func (s *Store) DeleteProject(projectID int64) error {
-	_, err := s.DB.Exec(`DELETE FROM projects WHERE id = ?`, projectID)
+func (s *Store) ListProxyBindings() ([]ProxyBinding, error) {
+	return s.listProxyBindings(`
+SELECT id, project_id, domain, port, datetime(created_at, 'localtime')
+FROM proxy_bindings ORDER BY domain`, nil)
+}
+
+func (s *Store) ListProjectProxyBindings(projectID int64) ([]ProxyBinding, error) {
+	return s.listProxyBindings(`
+SELECT id, project_id, domain, port, datetime(created_at, 'localtime')
+FROM proxy_bindings WHERE project_id = ? ORDER BY id DESC`, []any{projectID})
+}
+
+func (s *Store) listProxyBindings(query string, args []any) ([]ProxyBinding, error) {
+	rows, err := s.DB.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	bindings := make([]ProxyBinding, 0)
+	for rows.Next() {
+		var binding ProxyBinding
+		if err := rows.Scan(&binding.ID, &binding.ProjectID, &binding.Domain, &binding.Port, &binding.CreatedAt); err != nil {
+			return nil, err
+		}
+		bindings = append(bindings, binding)
+	}
+	return bindings, rows.Err()
+}
+
+func (s *Store) GetProxyBindingByID(bindingID int64) (*ProxyBinding, error) {
+	row := s.DB.QueryRow(`
+SELECT id, project_id, domain, port, datetime(created_at, 'localtime')
+FROM proxy_bindings WHERE id = ?`, bindingID)
+	var binding ProxyBinding
+	if err := row.Scan(&binding.ID, &binding.ProjectID, &binding.Domain, &binding.Port, &binding.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &binding, nil
+}
+
+func (s *Store) CreateProxyBinding(projectID int64, domain string, port int) (int64, error) {
+	result, err := s.DB.Exec(
+		`INSERT INTO proxy_bindings(project_id, domain, port) VALUES(?, ?, ?)`,
+		projectID,
+		domain,
+		port,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func (s *Store) DeleteProxyBinding(bindingID, projectID int64) error {
+	_, err := s.DB.Exec(`DELETE FROM proxy_bindings WHERE id = ? AND project_id = ?`, bindingID, projectID)
 	return err
+}
+
+func (s *Store) DeleteProject(projectID int64) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM proxy_bindings WHERE project_id = ?`, projectID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM projects WHERE id = ?`, projectID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

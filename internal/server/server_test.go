@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -31,6 +32,16 @@ type fakeUpdateService struct {
 	upgradeErr    error
 	checked       bool
 	upgraded      bool
+}
+
+type fakeReverseProxy struct {
+	bindings []db.ProxyBinding
+	err      error
+}
+
+func (f *fakeReverseProxy) Reload(bindings []db.ProxyBinding) error {
+	f.bindings = append([]db.ProxyBinding(nil), bindings...)
+	return f.err
 }
 
 func (f fakeMonitorCollector) SystemSnapshot(path string) (monitor.SystemSnapshot, error) {
@@ -306,5 +317,73 @@ func TestSetExecutableUpdatesFileMode(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o640 {
 		t.Fatalf("mode after disable = %o, want 640", got)
+	}
+}
+
+func TestValidDomain(t *testing.T) {
+	tests := []struct {
+		domain string
+		valid  bool
+	}{
+		{domain: "app.example.com", valid: true},
+		{domain: "example.com", valid: true},
+		{domain: "https://example.com", valid: false},
+		{domain: "example.com:443", valid: false},
+		{domain: "-app.example.com", valid: false},
+		{domain: "app..example.com", valid: false},
+	}
+	for _, tt := range tests {
+		if got := validDomain(tt.domain); got != tt.valid {
+			t.Errorf("validDomain(%q) = %v, want %v", tt.domain, got, tt.valid)
+		}
+	}
+}
+
+func TestProxyBindingCreateListDelete(t *testing.T) {
+	store := newTestStore(t)
+	projectID, err := store.CreateProject(db.Project{Name: "demo", Slug: "demo", Path: "/srv/demo", RunUser: "www-data"})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	proxy := &fakeReverseProxy{}
+	s := &Server{
+		store: store,
+		monitor: fakeMonitorCollector{processes: map[string]monitor.ProcessSnapshot{
+			strconv.FormatInt(projectID, 10): {Status: "RUNNING", ListenPorts: []int{9000}},
+		}},
+		proxy: proxy,
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/projects/1/proxy-bindings", strings.NewReader(`{"domain":"App.Example.com.","port":9000}`))
+	createReq.Header.Set("Accept", "application/json")
+	createRR := httptest.NewRecorder()
+	s.handleCreateProxyBinding(createRR, createReq, projectID)
+	if createRR.Code != http.StatusOK {
+		t.Fatalf("create status = %d, body = %s", createRR.Code, createRR.Body.String())
+	}
+	bindings, err := store.ListProjectProxyBindings(projectID)
+	if err != nil || len(bindings) != 1 || bindings[0].Domain != "app.example.com" || bindings[0].Port != 9000 {
+		t.Fatalf("bindings = %#v, err = %v", bindings, err)
+	}
+	if len(proxy.bindings) != 1 {
+		t.Fatalf("proxy bindings = %#v", proxy.bindings)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/projects/1/proxy-bindings", nil)
+	listRR := httptest.NewRecorder()
+	s.handleAPIProxyBindings(listRR, listReq, projectID)
+	if listRR.Code != http.StatusOK || !strings.Contains(listRR.Body.String(), `"domain":"app.example.com"`) {
+		t.Fatalf("list status = %d, body = %s", listRR.Code, listRR.Body.String())
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodPost, "/projects/1/proxy-bindings/delete", strings.NewReader(fmt.Sprintf(`{"binding_id":%d}`, bindings[0].ID)))
+	deleteReq.Header.Set("Accept", "application/json")
+	deleteRR := httptest.NewRecorder()
+	s.handleDeleteProxyBinding(deleteRR, deleteReq, projectID)
+	if deleteRR.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, body = %s", deleteRR.Code, deleteRR.Body.String())
+	}
+	if len(proxy.bindings) != 0 {
+		t.Fatalf("proxy bindings after delete = %#v", proxy.bindings)
 	}
 }

@@ -43,6 +43,11 @@ type Server struct {
 	monitor   monitorCollector
 	systemctl systemctl.Client
 	update    updateService
+	proxy     ReverseProxy
+}
+
+type ReverseProxy interface {
+	Reload([]db.ProxyBinding) error
 }
 
 type monitorCollector interface {
@@ -86,6 +91,10 @@ type apiProject struct {
 	UpdatedAt  string `json:"updated_at"`
 	Status     string `json:"status"`
 	StatusText string `json:"status_text"`
+}
+
+func (s *Server) SetReverseProxy(proxy ReverseProxy) {
+	s.proxy = proxy
 }
 
 type apiDirEntry struct {
@@ -405,6 +414,10 @@ func (s *Server) handleAPIRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 3 && parts[2] == "logs" {
 		s.handleAPIProjectLogs(w, r, projectID)
+		return
+	}
+	if len(parts) == 3 && parts[2] == "proxy-bindings" {
+		s.handleAPIProxyBindings(w, r, projectID)
 		return
 	}
 	if len(parts) == 4 && parts[2] == "files" && parts[3] == "content" {
@@ -803,6 +816,12 @@ func (s *Server) handleProjectRoute(w http.ResponseWriter, r *http.Request) {
 		s.handleUpload(w, r, projectID)
 	case "config":
 		s.handleProjectConfig(w, r, projectID)
+	case "proxy-bindings":
+		if len(parts) >= 3 && parts[2] == "delete" {
+			s.handleDeleteProxyBinding(w, r, projectID)
+			return
+		}
+		s.handleCreateProxyBinding(w, r, projectID)
 	case "action":
 		s.handleProjectAction(w, r, projectID)
 	case "logs":
@@ -1038,6 +1057,155 @@ func (s *Server) handleProjectConfig(w http.ResponseWriter, r *http.Request, pro
 	s.respondProjectConfigResult(w, r, projectID, "配置已保存并应用", false, entryFile)
 }
 
+func (s *Server) reloadReverseProxy() error {
+	if s.proxy == nil {
+		return nil
+	}
+	bindings, err := s.store.ListProxyBindings()
+	if err != nil {
+		return err
+	}
+	return s.proxy.Reload(bindings)
+}
+
+func (s *Server) handleAPIProxyBindings(w http.ResponseWriter, r *http.Request, projectID int64) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	project, err := s.store.GetProjectByID(projectID)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if project == nil {
+		http.NotFound(w, r)
+		return
+	}
+	bindings, err := s.store.ListProjectProxyBindings(projectID)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "bindings": bindings})
+}
+
+func (s *Server) handleCreateProxyBinding(w http.ResponseWriter, r *http.Request, projectID int64) {
+	if r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+	if !requireAJAX(w, r) {
+		return
+	}
+	project, err := s.store.GetProjectByID(projectID)
+	if err != nil || project == nil {
+		http.NotFound(w, r)
+		return
+	}
+	var req struct {
+		Domain string `json:"domain"`
+		Port   int    `json:"port"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请求参数错误"})
+		return
+	}
+	domain := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(req.Domain)), ".")
+	if !validDomain(domain) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "域名格式不正确，请不要包含协议、端口或路径"})
+		return
+	}
+	if req.Port < 1 || req.Port > 65535 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "端口必须在 1 到 65535 之间"})
+		return
+	}
+	collector := s.monitor
+	if collector == nil {
+		collector = monitor.New(s.sup)
+	}
+	snapshot := collector.ProcessSnapshots([]db.Project{*project})[strconv.FormatInt(projectID, 10)]
+	if snapshot.Status != "RUNNING" || !containsPort(snapshot.ListenPorts, req.Port) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "该端口不属于当前运行进程，请刷新后重试"})
+		return
+	}
+	bindingID, err := s.store.CreateProxyBinding(projectID, domain, req.Port)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "绑定失败，可能该域名已被使用"})
+		return
+	}
+	if err := s.reloadReverseProxy(); err != nil {
+		_ = s.store.DeleteProxyBinding(bindingID, projectID)
+		_ = s.reloadReverseProxy()
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "应用域名代理失败：" + err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "域名绑定成功", "binding_id": bindingID})
+}
+
+func (s *Server) handleDeleteProxyBinding(w http.ResponseWriter, r *http.Request, projectID int64) {
+	if r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+	if !requireAJAX(w, r) {
+		return
+	}
+	var req struct {
+		BindingID int64 `json:"binding_id"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil || req.BindingID <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请求参数错误"})
+		return
+	}
+	binding, err := s.store.GetProxyBindingByID(req.BindingID)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if binding == nil || binding.ProjectID != projectID {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.store.DeleteProxyBinding(binding.ID, projectID); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if err := s.reloadReverseProxy(); err != nil {
+		_, _ = s.store.CreateProxyBinding(projectID, binding.Domain, binding.Port)
+		_ = s.reloadReverseProxy()
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "删除代理配置失败：" + err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "域名绑定已删除"})
+}
+
+func containsPort(ports []int, target int) bool {
+	for _, port := range ports {
+		if port == target {
+			return true
+		}
+	}
+	return false
+}
+
+func validDomain(domain string) bool {
+	if len(domain) == 0 || len(domain) > 253 || strings.Contains(domain, "..") {
+		return false
+	}
+	for _, label := range strings.Split(domain, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, char := range label {
+			if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func (s *Server) handleProjectAction(w http.ResponseWriter, r *http.Request, projectID int64) {
 	if r.Method != http.MethodPost {
 		http.NotFound(w, r)
@@ -1184,6 +1352,10 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request, pro
 	}
 	if err := s.store.DeleteProject(project.ID); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "删除数据库记录失败：" + err.Error()})
+		return
+	}
+	if err := s.reloadReverseProxy(); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "项目已删除，但更新域名代理失败：" + err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "项目已删除"})

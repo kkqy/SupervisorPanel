@@ -13,6 +13,7 @@ import (
 
 	"supervisorpanel/internal/config"
 	"supervisorpanel/internal/db"
+	"supervisorpanel/internal/proxy"
 	"supervisorpanel/internal/server"
 	"supervisorpanel/internal/supervisor"
 )
@@ -50,6 +51,19 @@ func serveCmd() {
 	if err != nil {
 		log.Fatalf("init server failed: %v", err)
 	}
+	var caddyProxy *proxy.Caddy
+	if cfg.CaddyEnabled {
+		bindings, err := store.ListProxyBindings()
+		if err != nil {
+			log.Fatalf("读取域名绑定失败: %v", err)
+		}
+		caddyProxy = proxy.New(cfg.CaddyDataDir)
+		if err := caddyProxy.Reload(bindings); err != nil {
+			log.Fatalf("启动内嵌 Caddy 失败: %v", err)
+		}
+		srv.SetReverseProxy(caddyProxy)
+		log.Printf("内嵌 Caddy 已启用")
+	}
 	rootCtx, stopBackground := context.WithCancel(context.Background())
 	defer stopBackground()
 	srv.StartUpdateChecker(rootCtx)
@@ -74,6 +88,9 @@ func serveCmd() {
 	<-quit
 	stopBackground()
 	_ = httpServer.Close()
+	if caddyProxy != nil {
+		_ = caddyProxy.Stop()
+	}
 }
 
 func initAdminCmd(args []string) {

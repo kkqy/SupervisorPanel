@@ -4,6 +4,7 @@ import type {
   FileContentResponse,
   LogsResponse,
   ProcessStatusesResponse,
+  ProxyBindingsResponse,
   ProjectDetailResponse,
   ProjectsResponse,
   StatusesResponse,
@@ -56,7 +57,12 @@ export function projectAction(projectID: number, action: 'start' | 'stop' | 'res
   })
 }
 
-export function saveProjectConfig(projectID: number, entryFile: string, args: string, runUser: string) {
+export function saveProjectConfig(
+  projectID: number,
+  entryFile: string,
+  args: string,
+  runUser: string,
+) {
   return request<ActionResponse>(`/projects/${projectID}/config`, {
     method: 'POST',
     json: {
@@ -64,6 +70,24 @@ export function saveProjectConfig(projectID: number, entryFile: string, args: st
       args,
       run_user: runUser,
     },
+  })
+}
+
+export function getProxyBindings(projectID: number) {
+  return request<ProxyBindingsResponse>(`/api/projects/${projectID}/proxy-bindings`)
+}
+
+export function createProxyBinding(projectID: number, domain: string, port: number) {
+  return request<ActionResponse>(`/projects/${projectID}/proxy-bindings`, {
+    method: 'POST',
+    json: { domain, port },
+  })
+}
+
+export function deleteProxyBinding(projectID: number, bindingID: number) {
+  return request<ActionResponse>(`/projects/${projectID}/proxy-bindings/delete`, {
+    method: 'POST',
+    json: { binding_id: bindingID },
   })
 }
 

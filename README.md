@@ -9,6 +9,7 @@ SupervisorPanel 是一个基于 Go + SQLite3 的 Supervisor Web 管理面板。
 - 上传文件（支持普通多文件和目录结构上传）
 - 在项目文件列表中指定主程序（立即生效）并设置启动参数
 - 通过 Supervisor 启动、停止、重启项目
+- 点击项目进程的监听端口绑定域名，通过进程内嵌 Caddy 自动反向代理并启用 HTTPS
 - 支持删除项目、删除项目内文件
 - 支持常见文本文件在线编辑（txt/json/yaml/ini 等，1MB 限制）
 - 支持查看项目日志（最近 N 行）
@@ -57,6 +58,8 @@ go build ./cmd/supervisor-panel
 - `SP_SUPERVISORCTL_BIN=/usr/bin/supervisorctl`
 - `SP_SYSTEMCTL_BIN=/usr/bin/systemctl`
 - `SP_RUNTIME_USER=www-data`
+- `SP_CADDY_ENABLED=true`（启用进程内嵌 Caddy）
+- `SP_CADDY_DATA_DIR=./data/caddy`（HTTPS 证书等 Caddy 数据目录）
 - `SP_UPDATE_CHECK_ENABLED=true`
 - `SP_UPDATE_CHECK_INTERVAL_HOURS=6`
 - `SP_UPDATE_GITHUB_REPO=kkqy/SupervisorPanel`
@@ -68,6 +71,15 @@ go build ./cmd/supervisor-panel
 ```bash
 go run ./cmd/supervisor-panel init-admin --db ./data/supervisor-panel.db --username admin --password your_password
 ```
+
+## 域名代理
+
+项目启动后，项目详情会显示进程实际监听的端口。点击端口并输入域名即可创建绑定，保存后会立即热更新内嵌 Caddy 配置，无需安装或启动单独的 Caddy 服务。已有绑定会在项目详情中列出，可以随时查看或删除；同一项目支持多条域名绑定。
+
+- 域名的 DNS 记录需指向服务器公网 IP。
+- 自动 HTTPS 需要公网能够访问服务器的 80、443 端口。
+- 代理目标固定为 `127.0.0.1:<项目端口>`，建议项目仅监听本机地址。
+- 如需停用内嵌 Caddy，可设置 `SP_CADDY_ENABLED=false`。
 
 ## 安装（Debian/Ubuntu）
 
