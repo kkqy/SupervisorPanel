@@ -1,5 +1,13 @@
 import { request } from './http'
-import type { ActionResponse, SystemStatusResponse, UpdateActionResponse, UpdateStatusResponse } from '@/types/api'
+import type { ActionResponse, SystemStatusResponse, SystemTimeResponse, TimeSyncRequest, UpdateActionResponse, UpdateStatusResponse } from '@/types/api'
+
+export function getSystemTime() {
+  return request<SystemTimeResponse>('/api/system/time')
+}
+
+export function syncSystemTime(json: TimeSyncRequest) {
+  return request<SystemTimeResponse>('/api/system/time/sync', { method: 'POST', json })
+}
 
 export function getSystemStatus() {
   return request<SystemStatusResponse>('/api/system/status')

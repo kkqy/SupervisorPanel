@@ -12,6 +12,8 @@
 
     <el-alert v-if="errorText" :title="errorText" type="error" show-icon :closable="false" />
 
+    <ServerTimeCard />
+
     <div class="metric-grid">
       <el-card shadow="never">
         <template #header>CPU</template>
@@ -43,6 +45,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { errorMessage } from '@/api/http'
 import { getSystemStatus } from '@/api/system'
 import type { SystemSnapshot } from '@/types/api'
+import ServerTimeCard from '@/components/ServerTimeCard.vue'
 
 const loading = ref(false)
 const refreshing = ref(false)

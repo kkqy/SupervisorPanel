@@ -91,6 +91,28 @@ export interface SystemStatusResponse extends ApiEnvelope {
   system: SystemSnapshot
 }
 
+export interface SystemTime {
+  server_time: string
+  timezone: string
+  available: boolean
+  ntp_enabled: boolean
+  synchronized: boolean
+  source_mode: 'system' | 'custom'
+  custom_server: string
+  custom_available: boolean
+  active_server: string
+  message: string
+}
+
+export interface TimeSyncRequest {
+  mode: 'system' | 'custom'
+  server: string
+}
+
+export interface SystemTimeResponse extends ApiEnvelope {
+  time: SystemTime
+}
+
 export interface UpdateStatus {
   enabled: boolean
   current_version: string

@@ -30,6 +30,7 @@ import (
 	"supervisorpanel/internal/monitor"
 	"supervisorpanel/internal/supervisor"
 	"supervisorpanel/internal/systemctl"
+	"supervisorpanel/internal/timesync"
 	"supervisorpanel/internal/update"
 )
 
@@ -44,6 +45,7 @@ type Server struct {
 	systemctl systemctl.Client
 	update    updateService
 	proxy     ReverseProxy
+	timeSync  timeSyncService
 }
 
 type ReverseProxy interface {
@@ -138,6 +140,7 @@ func New(cfg config.Config, store *db.Store, sup *supervisor.Client) (*Server, e
 		monitor:   monitor.New(sup),
 		systemctl: systemctl.Client{Bin: cfg.SystemctlBin},
 		update:    updateSvc,
+		timeSync:  timesync.New(cfg.SystemctlBin),
 	}, nil
 }
 
@@ -150,6 +153,8 @@ func (s *Server) StartUpdateChecker(ctx context.Context) {
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/system/time", s.requireAuthAPI(s.handleAPISystemTime))
+	mux.HandleFunc("POST /api/system/time/sync", s.requireAuthAPI(s.handleAPISyncTime))
 	mux.HandleFunc("/assets/", s.serveStatic)
 	mux.HandleFunc("/api/", s.requireAuthAPI(s.handleAPIRoute))
 	mux.HandleFunc("/login", s.handleLogin)

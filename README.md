@@ -18,6 +18,7 @@ SupervisorPanel 是一个基于 Go + SQLite3 的 Supervisor Web 管理面板。
 - 项目文件支持资源管理器式浏览，并可在当前目录新建文件夹/文件
 - 项目文件列表支持单文件下载
 - 后台自动检测新版本，发现更新后支持管理员一键提交升级
+- 系统状态页显示服务器时间、时区和同步状态，支持沿用系统 NTP 配置或设置自定义时间源
 
 ## 技术栈
 
@@ -71,6 +72,21 @@ go build ./cmd/supervisor-panel
 ```bash
 go run ./cmd/supervisor-panel init-admin --db ./data/supervisor-panel.db --username admin --password your_password
 ```
+
+## 服务器时间校准
+
+在“系统状态”的“服务器时间”卡片中查看服务器时间（包含 UTC 偏移）、时区、自动同步开关和系统报告的同步状态。页面每 5 秒刷新，时间按服务器时区显示，不使用浏览器时间校准服务器。
+
+- 默认选择“系统配置”，通过 `timedatectl --no-ask-password set-ntp true` 启用系统已有的 NTP 同步服务，持续沿用该服务的时间源配置。
+- “自定义 NTP”接受单个域名、IPv4 或 IPv6 地址，不接受 URL、端口或多个地址。该模式需要已运行的 `systemd-timesyncd`；若服务尚未运行，可先使用“系统配置”启用。对于 chrony、ntpd 等其他同步服务，请在服务器配置时间源后使用“系统配置”。
+- 自定义时间源保存在 `/etc/systemd/timesyncd.conf.d/90-supervisor-panel.conf`，保存后重启 `systemd-timesyncd`。切回“系统配置”仅删除面板管理的覆盖文件，保留系统原有配置。命令失败时尝试恢复原配置并重启服务，回滚失败会明确提示。
+- 自定义配置重置系统级 NTP 列表和备用列表；网络接口提供的 NTP 服务器仍可能参与选择。页面分别展示配置地址与当前连接地址，不会将配置地址冒充实际连接地址。
+- 操作仅允许登录的管理员通过同源请求提交。服务账户需具备启用 NTP 的权限；自定义配置还需写入上述配置目录及重启 `systemd-timesyncd` 的权限。面板不会运行 `sudo` 或交互式索取密码。
+- 命令提交成功仅表示已启用自动同步，不代表已完成新一轮校准；“系统报告已同步”来自内核同步标记，可能保留前一次同步结果。页面持续展示实际状态，超过两分钟仍未同步时提示检查网络和时间源。NTP 的调整速度由系统服务决定，面板不强制跳变时钟，也不更改时区。
+
+同步服务不可用或状态读取失败时仍返回服务器当前时间，并在界面显示原因。时间调整可能影响日志、定时任务及会话有效期，操作前会要求确认。
+
+相关实现的自动化测试使用模拟命令与临时配置文件；开发验证不执行真实校时命令。同步行为遵循 [systemd 的 timedatectl 文档](https://www.freedesktop.org/software/systemd/man/latest/timedatectl.html)及 [timesyncd 配置说明](https://www.freedesktop.org/software/systemd/man/latest/timesyncd.conf.html)。
 
 ## 域名代理
 
